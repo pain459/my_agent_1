@@ -68,8 +68,16 @@ Useful commands:
               Approve a pending knowledge item for runtime use and export.
 /knowledge-reject <id>
               Reject a pending knowledge item.
+/knowledge-delete <id>
+              Permanently delete one knowledge item.
 /knowledge-search <query>
               Search approved reusable knowledge.
+/master-clear memory CONFIRM_CLEAR_MEMORY
+              Clear reusable knowledge and the master Q/A index.
+/master-clear chats CONFIRM_CLEAR_CHATS
+              Clear saved chat sessions and start a fresh session.
+/master-clear all CONFIRM_CLEAR_ALL
+              Clear both memory and saved chat sessions.
 /session      Show the active session id, gist, and timestamps.
 /sessions     List recent saved sessions with short gists.
 /use <id>     Resume a saved session.
@@ -115,6 +123,24 @@ npm run training:export
 ```
 
 The export writes `.agent/exports/training.jsonl`. It does not start a fine-tuning job.
+
+## Deleting Memory
+
+Delete one knowledge item:
+
+```text
+/knowledge-delete <id>
+```
+
+Clear larger areas with the guarded master command:
+
+```text
+/master-clear memory CONFIRM_CLEAR_MEMORY
+/master-clear chats CONFIRM_CLEAR_CHATS
+/master-clear all CONFIRM_CLEAR_ALL
+```
+
+`memory` clears `.agent/knowledge.json` and `.agent/qa-index.json`. `chats` clears `.agent/sessions/` and starts a fresh active session. `all` does both.
 
 ## Project Structure
 

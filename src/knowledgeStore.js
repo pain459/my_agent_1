@@ -69,6 +69,28 @@ export class KnowledgeStore {
     return item;
   }
 
+  async delete(id) {
+    const database = await this.load();
+    const item = database.items.find((current) => current.id === id);
+
+    if (!item) {
+      return null;
+    }
+
+    database.items = database.items.filter((current) => current.id !== id);
+    database.itemCount = database.items.length;
+    database.updatedAt = new Date().toISOString();
+    await this.save(database);
+
+    return item;
+  }
+
+  async clear() {
+    const database = createDatabase([]);
+    await this.save(database);
+    return database;
+  }
+
   async list({ status } = {}) {
     const database = await this.load();
     const items = status

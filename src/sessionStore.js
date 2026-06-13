@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const SESSION_SCHEMA_VERSION = 1;
@@ -80,6 +80,11 @@ export class SessionStore {
     );
 
     return nextSession;
+  }
+
+  async clearAllSessions() {
+    await rm(this.directory, { force: true, recursive: true });
+    await this.ensureDirectory();
   }
 
   async ensureDirectory() {

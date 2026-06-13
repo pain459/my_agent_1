@@ -95,6 +95,12 @@ export class QaStore {
     };
   }
 
+  async clear() {
+    const database = createDatabase([]);
+    await this.save(database);
+    return database;
+  }
+
   async save(database) {
     await mkdir(dirname(this.path), { recursive: true });
     await writeFile(this.path, `${JSON.stringify(database, null, 2)}\n`, "utf8");

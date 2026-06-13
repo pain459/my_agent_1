@@ -16,12 +16,14 @@ const COMMANDS = new Map([
   ["/help", "Show available commands."],
   ["/knowledge-approve", "Approve a pending knowledge item. Usage: /knowledge-approve <id>"],
   ["/knowledge-build", "Extract pending knowledge from sessions. Optional: /knowledge-build <session-id>"],
+  ["/knowledge-delete", "Permanently delete a knowledge item. Usage: /knowledge-delete <id>"],
   ["/knowledge-list", "List knowledge items. Optional: /knowledge-list pending|approved|rejected"],
   ["/knowledge-reject", "Reject a pending knowledge item. Usage: /knowledge-reject <id>"],
   ["/knowledge-search", "Search approved knowledge. Usage: /knowledge-search <query>"],
   ["/memory-build", "Rebuild the master Q/A database from all sessions."],
   ["/memory-search", "Search prior Q/A. Usage: /memory-search <question>"],
   ["/memory-stats", "Show master Q/A database stats and patterns."],
+  ["/master-clear", "Danger zone. Usage: /master-clear memory|chats|all CONFIRM_CLEAR_<TARGET>"],
   ["/new", "Start a new session."],
   ["/session", "Show the current session."],
   ["/sessions", "List recent sessions."],
@@ -176,6 +178,13 @@ async function handleCommand(inputCommand, context) {
     });
   }
 
+  if (command === "/knowledge-delete") {
+    await deleteKnowledgeItem({
+      knowledgeStore,
+      id: args[0],
+    });
+  }
+
   if (command === "/knowledge-reject") {
     await updateKnowledgeStatus({
       knowledgeStore,
@@ -213,6 +222,17 @@ async function handleCommand(inputCommand, context) {
 
   if (command === "/memory-stats") {
     printMemoryStats(await qaStore.stats());
+  }
+
+  if (command === "/master-clear") {
+    await masterClear({
+      agent,
+      args,
+      knowledgeStore,
+      qaStore,
+      sessionStore,
+      startupPersona,
+    });
   }
 
   if (command === "/clear") {
@@ -258,6 +278,67 @@ async function handleCommand(inputCommand, context) {
   }
 
   return true;
+}
+
+async function deleteKnowledgeItem({ knowledgeStore, id }) {
+  if (!id) {
+    console.log("\nUsage: /knowledge-delete <id>");
+    return;
+  }
+
+  const item = await knowledgeStore.delete(id);
+
+  if (!item) {
+    console.log(`\nNo knowledge item found for ${id}.`);
+    return;
+  }
+
+  console.log(`\nDeleted ${item.id}: ${item.text}`);
+}
+
+async function masterClear({ agent, args, knowledgeStore, qaStore, sessionStore, startupPersona }) {
+  const [target, confirmation] = args;
+  const requiredConfirmations = {
+    memory: "CONFIRM_CLEAR_MEMORY",
+    chats: "CONFIRM_CLEAR_CHATS",
+    all: "CONFIRM_CLEAR_ALL",
+  };
+
+  if (!requiredConfirmations[target]) {
+    console.log("\nUsage: /master-clear memory|chats|all CONFIRM_CLEAR_<TARGET>");
+    console.log("Examples:");
+    console.log("  /master-clear memory CONFIRM_CLEAR_MEMORY");
+    console.log("  /master-clear chats CONFIRM_CLEAR_CHATS");
+    console.log("  /master-clear all CONFIRM_CLEAR_ALL");
+    return;
+  }
+
+  if (confirmation !== requiredConfirmations[target]) {
+    console.log(`\nConfirmation required: ${requiredConfirmations[target]}`);
+    return;
+  }
+
+  if (target === "memory" || target === "all") {
+    await knowledgeStore.clear();
+    await qaStore.clear();
+  }
+
+  if (target === "chats" || target === "all") {
+    await sessionStore.clearAllSessions();
+    await agent.loadSession(await sessionStore.createSession({ persona: startupPersona }));
+  }
+
+  if (target === "memory") {
+    console.log("\nCleared knowledge memory and master Q/A index.");
+  }
+
+  if (target === "chats") {
+    console.log(`\nCleared chat sessions. Started fresh session ${agent.session.id}.`);
+  }
+
+  if (target === "all") {
+    console.log(`\nCleared memory and chat sessions. Started fresh session ${agent.session.id}.`);
+  }
 }
 
 async function updateKnowledgeStatus({ knowledgeStore, id, status }) {
