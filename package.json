@@ -1,0 +1,14 @@
+{
+  "name": "my-agent-1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small command-line agent that talks with a user and calls the OpenAI API.",
+  "scripts": {
+    "start": "node src/cli.js",
+    "check": "node --check src/cli.js && node --check src/agent.js && node --check src/config.js && node --check src/openaiClient.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
