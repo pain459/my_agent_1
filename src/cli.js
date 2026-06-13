@@ -16,6 +16,7 @@ async function main() {
   const client = new OpenAIClient({
     apiKey: config.apiKey,
     model: config.model,
+    reasoningEffort: config.reasoningEffort,
   });
   const agent = new Agent({
     client,

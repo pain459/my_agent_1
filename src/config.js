@@ -42,6 +42,7 @@ export function getConfig() {
   return {
     apiKey: process.env.OPENAI_API_KEY,
     model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
+    reasoningEffort: process.env.OPENAI_REASONING_EFFORT,
     agentName: process.env.AGENT_NAME || DEFAULT_AGENT_NAME,
   };
 }

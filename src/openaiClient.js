@@ -1,29 +1,35 @@
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
 export class OpenAIClient {
-  constructor({ apiKey, model, fetchImpl = fetch }) {
+  constructor({ apiKey, model, reasoningEffort, fetchImpl = fetch }) {
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY is required.");
     }
 
     this.apiKey = apiKey;
     this.model = model;
+    this.reasoningEffort = reasoningEffort;
     this.fetchImpl = fetchImpl;
   }
 
   async createResponse({ instructions, input }) {
+    const body = {
+      model: this.model,
+      instructions,
+      input,
+    };
+
+    if (this.reasoningEffort) {
+      body.reasoning = { effort: this.reasoningEffort };
+    }
+
     const response = await this.fetchImpl(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: this.model,
-        reasoning: { effort: "low" },
-        instructions,
-        input,
-      }),
+      body: JSON.stringify(body),
     });
 
     const payload = await readJson(response);

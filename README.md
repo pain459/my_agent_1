@@ -22,6 +22,8 @@ export OPENAI_API_KEY="your-api-key"
 export OPENAI_MODEL="gpt-4o-mini"
 ```
 
+`OPENAI_REASONING_EFFORT` is optional and should only be set for models that support reasoning options.
+
 ## Run
 
 ```bash
