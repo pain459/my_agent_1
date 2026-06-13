@@ -8,7 +8,7 @@ export class Agent {
     this.sessionStore = sessionStore;
   }
 
-  async send(userText) {
+  async send(userText, { knownMemory = "" } = {}) {
     this.session.messages.push({
       role: "user",
       content: userText,
@@ -18,7 +18,7 @@ export class Agent {
     await this.save();
 
     const answer = await this.client.createResponse({
-      instructions: getPersonaInstructions(this.session.personaId),
+      instructions: buildInstructions(this.session.personaId, knownMemory),
       input: this.session.messages.map((message) => ({
         role: message.role,
         content: message.content,
@@ -73,4 +73,14 @@ export class Agent {
     this.session = await this.sessionStore.saveSession(this.session);
     return this.session;
   }
+}
+
+function buildInstructions(personaId, knownMemory) {
+  const personaInstructions = getPersonaInstructions(personaId);
+
+  if (!knownMemory) {
+    return personaInstructions;
+  }
+
+  return `${personaInstructions}\n\n${knownMemory}`;
 }

@@ -3,6 +3,8 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { Agent } from "./agent.js";
 import { getConfig } from "./config.js";
+import { extractKnowledgeFromSession } from "./knowledgeExtractor.js";
+import { formatKnownMemory, KnowledgeStore } from "./knowledgeStore.js";
 import { OpenAIClient } from "./openaiClient.js";
 import { getDefaultPersona, getPersona, listPersonas } from "./personas.js";
 import { QaStore } from "./qaStore.js";
@@ -12,6 +14,11 @@ const COMMANDS = new Map([
   ["/clear", "Reset the in-memory conversation."],
   ["/exit", "Quit the agent."],
   ["/help", "Show available commands."],
+  ["/knowledge-approve", "Approve a pending knowledge item. Usage: /knowledge-approve <id>"],
+  ["/knowledge-build", "Extract pending knowledge from sessions. Optional: /knowledge-build <session-id>"],
+  ["/knowledge-list", "List knowledge items. Optional: /knowledge-list pending|approved|rejected"],
+  ["/knowledge-reject", "Reject a pending knowledge item. Usage: /knowledge-reject <id>"],
+  ["/knowledge-search", "Search approved knowledge. Usage: /knowledge-search <query>"],
   ["/memory-build", "Rebuild the master Q/A database from all sessions."],
   ["/memory-search", "Search prior Q/A. Usage: /memory-search <question>"],
   ["/memory-stats", "Show master Q/A database stats and patterns."],
@@ -24,6 +31,7 @@ const COMMANDS = new Map([
 async function main() {
   const config = getConfig();
   const sessionStore = new SessionStore();
+  const knowledgeStore = new KnowledgeStore();
   const qaStore = new QaStore();
   const rl = readline.createInterface({ input, output });
   const startupPersona = await selectPersona(rl);
@@ -32,6 +40,10 @@ async function main() {
     apiKey: config.apiKey,
     model: config.model,
     reasoningEffort: config.reasoningEffort,
+  });
+  const extractionClient = new OpenAIClient({
+    apiKey: config.apiKey,
+    model: "gpt-4o-mini",
   });
   const agent = new Agent({
     client,
@@ -58,7 +70,14 @@ async function main() {
         continue;
       }
 
-      if (await handleCommand(userText, agent, sessionStore, qaStore, startupPersona)) {
+      if (await handleCommand(userText, {
+        agent,
+        extractionClient,
+        knowledgeStore,
+        qaStore,
+        sessionStore,
+        startupPersona,
+      })) {
         if (userText === "/exit") {
           break;
         }
@@ -78,7 +97,8 @@ async function main() {
           continue;
         }
 
-        const response = await agent.send(userText);
+        const knownMemory = formatKnownMemory(await knowledgeStore.search(userText, { limit: 5 }));
+        const response = await agent.send(userText, { knownMemory });
         await qaStore.addExchange({
           session: agent.session,
           question: userText,
@@ -94,7 +114,15 @@ async function main() {
   }
 }
 
-async function handleCommand(inputCommand, agent, sessionStore, qaStore, startupPersona) {
+async function handleCommand(inputCommand, context) {
+  const {
+    agent,
+    extractionClient,
+    knowledgeStore,
+    qaStore,
+    sessionStore,
+    startupPersona,
+  } = context;
   const [command, ...args] = inputCommand.split(/\s+/);
 
   if (!COMMANDS.has(command)) {
@@ -106,6 +134,65 @@ async function handleCommand(inputCommand, agent, sessionStore, qaStore, startup
     for (const [name, description] of COMMANDS) {
       console.log(`  ${name.padEnd(8)} ${description}`);
     }
+  }
+
+  if (command === "/knowledge-build") {
+    const sessionId = args[0];
+    const sessions = sessionId
+      ? [await sessionStore.getSession(sessionId)].filter(Boolean)
+      : await sessionStore.listSessions();
+
+    if (sessionId && sessions.length === 0) {
+      console.log(`\nNo session found for ${sessionId}.`);
+      return true;
+    }
+
+    let extractedCount = 0;
+    let addedCount = 0;
+
+    for (const session of sessions) {
+      const candidates = await extractKnowledgeFromSession({
+        client: extractionClient,
+        session,
+      });
+      const added = await knowledgeStore.addCandidates(candidates);
+      extractedCount += candidates.length;
+      addedCount += added.length;
+    }
+
+    console.log(`\nExtracted ${extractedCount} candidates. Added ${addedCount} pending knowledge items.`);
+  }
+
+  if (command === "/knowledge-list") {
+    const status = args[0];
+    printKnowledgeItems(await knowledgeStore.list({ status }));
+  }
+
+  if (command === "/knowledge-approve") {
+    await updateKnowledgeStatus({
+      knowledgeStore,
+      id: args[0],
+      status: "approved",
+    });
+  }
+
+  if (command === "/knowledge-reject") {
+    await updateKnowledgeStatus({
+      knowledgeStore,
+      id: args[0],
+      status: "rejected",
+    });
+  }
+
+  if (command === "/knowledge-search") {
+    const query = args.join(" ");
+
+    if (!query) {
+      console.log("\nUsage: /knowledge-search <query>");
+      return true;
+    }
+
+    printKnowledgeItems(await knowledgeStore.search(query, { status: "approved" }));
   }
 
   if (command === "/memory-build") {
@@ -171,6 +258,22 @@ async function handleCommand(inputCommand, agent, sessionStore, qaStore, startup
   }
 
   return true;
+}
+
+async function updateKnowledgeStatus({ knowledgeStore, id, status }) {
+  if (!id) {
+    console.log(`\nUsage: /knowledge-${status === "approved" ? "approve" : "reject"} <id>`);
+    return;
+  }
+
+  const item = await knowledgeStore.updateStatus(id, status);
+
+  if (!item) {
+    console.log(`\nNo knowledge item found for ${id}.`);
+    return;
+  }
+
+  console.log(`\n${status === "approved" ? "Approved" : "Rejected"} ${item.id}: ${item.text}`);
 }
 
 async function findExactMemoryAnswer(qaStore, question) {
@@ -282,6 +385,22 @@ function printMemoryStats(stats) {
   if (stats.topKeywords.length > 0) {
     console.log("\nCommon keywords:");
     console.log(`  ${stats.topKeywords.map((item) => `${item.keyword}(${item.count})`).join(", ")}`);
+  }
+}
+
+function printKnowledgeItems(items) {
+  if (items.length === 0) {
+    console.log("\nNo knowledge items found.");
+    return;
+  }
+
+  console.log("\nKnowledge items:");
+
+  for (const item of items.slice(0, 20)) {
+    const score = item.score ? ` ${Math.round(item.score * 100)}%` : "";
+    console.log(`\n${item.id}${score}`);
+    console.log(`${item.status} ${item.type} confidence=${item.confidence}`);
+    console.log(truncateForDisplay(item.text, 500));
   }
 }
 

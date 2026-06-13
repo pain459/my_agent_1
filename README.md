@@ -60,6 +60,16 @@ Useful commands:
 /memory-search <question>
               Search prior Q/A records for similar questions.
 /memory-stats Show record count, repeated questions, and common keywords.
+/knowledge-build [session-id]
+              Extract pending reusable knowledge from all sessions or one session.
+/knowledge-list [pending|approved|rejected]
+              List extracted knowledge items for review.
+/knowledge-approve <id>
+              Approve a pending knowledge item for runtime use and export.
+/knowledge-reject <id>
+              Reject a pending knowledge item.
+/knowledge-search <query>
+              Search approved reusable knowledge.
 /session      Show the active session id, gist, and timestamps.
 /sessions     List recent saved sessions with short gists.
 /use <id>     Resume a saved session.
@@ -79,12 +89,41 @@ npm run memory:build
 
 During chat, exact repeated questions are answered from this master memory before making a new OpenAI API call. Similar questions are available through `/memory-search`, and broad patterns are visible through `/memory-stats`.
 
+## Raw Knowledge and Training Export
+
+The knowledge layer distills full chats into reusable items stored in `.agent/knowledge.json`. Extracted items start as `pending` so they can be reviewed before the agent relies on them.
+
+Build pending knowledge during chat:
+
+```text
+/knowledge-build
+```
+
+Approve useful items:
+
+```text
+/knowledge-list pending
+/knowledge-approve <id>
+```
+
+Approved knowledge is retrieved before OpenAI calls and injected into the prompt as known memory. Pending and rejected items are never used at runtime.
+
+Export approved knowledge as JSONL for future fine-tuning preparation:
+
+```bash
+npm run training:export
+```
+
+The export writes `.agent/exports/training.jsonl`. It does not start a fine-tuning job.
+
 ## Project Structure
 
 - `src/cli.js` runs the interactive terminal loop.
 - `src/agent.js` owns conversation state and agent behavior.
 - `src/openaiClient.js` wraps OpenAI API calls.
 - `src/personas.js` defines available agent personalities.
+- `src/knowledgeStore.js` stores reviewed reusable knowledge.
+- `src/knowledgeExtractor.js` extracts knowledge candidates from chat sessions.
 - `src/qaStore.js` builds and searches the master Q/A database.
 - `src/config.js` loads environment configuration.
 
