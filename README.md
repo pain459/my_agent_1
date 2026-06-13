@@ -26,11 +26,21 @@ export OPENAI_MODEL="gpt-4o-mini"
 
 ## Run
 
+Web UI:
+
+```bash
+npm run web
+```
+
+Open `http://localhost:3000`.
+
+CLI:
+
 ```bash
 npm start
 ```
 
-Choose the agent persona when the program starts, then type your message and press Enter. Use `/exit` to quit, `/clear` to reset conversation memory, and `/help` to see commands.
+The UI is the primary workspace. The CLI remains available for terminal use. Choose the agent persona when the program starts, then type your message and press Enter. Use `/exit` to quit, `/clear` to reset conversation memory, and `/help` to see commands.
 
 ## Personas
 
