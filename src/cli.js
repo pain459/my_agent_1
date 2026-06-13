@@ -4,6 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { Agent } from "./agent.js";
 import { getConfig } from "./config.js";
 import { OpenAIClient } from "./openaiClient.js";
+import { getDefaultPersona, getPersona, listPersonas } from "./personas.js";
 import { SessionStore } from "./sessionStore.js";
 
 const COMMANDS = new Map([
@@ -19,7 +20,9 @@ const COMMANDS = new Map([
 async function main() {
   const config = getConfig();
   const sessionStore = new SessionStore();
-  const session = await sessionStore.createSession();
+  const rl = readline.createInterface({ input, output });
+  const startupPersona = await selectPersona(rl);
+  const session = await sessionStore.createSession({ persona: startupPersona });
   const client = new OpenAIClient({
     apiKey: config.apiKey,
     model: config.model,
@@ -32,21 +35,25 @@ async function main() {
     sessionStore,
   });
 
-  const rl = readline.createInterface({ input, output });
-
   console.log(`${agent.name} is ready. Type /help for commands.`);
+  console.log(`Persona: ${startupPersona.name}`);
   console.log(`Session: ${agent.session.id} - ${agent.session.gist}`);
 
   try {
     while (true) {
-      const line = await rl.question("\nYou: ");
+      const line = await ask(rl, "\nYou: ");
+
+      if (line === null) {
+        break;
+      }
+
       const userText = line.trim();
 
       if (!userText) {
         continue;
       }
 
-      if (await handleCommand(userText, agent, sessionStore)) {
+      if (await handleCommand(userText, agent, sessionStore, startupPersona)) {
         if (userText === "/exit") {
           break;
         }
@@ -66,7 +73,7 @@ async function main() {
   }
 }
 
-async function handleCommand(inputCommand, agent, sessionStore) {
+async function handleCommand(inputCommand, agent, sessionStore, startupPersona) {
   const [command, ...args] = inputCommand.split(/\s+/);
 
   if (!COMMANDS.has(command)) {
@@ -90,8 +97,8 @@ async function handleCommand(inputCommand, agent, sessionStore) {
   }
 
   if (command === "/new") {
-    await agent.loadSession(await sessionStore.createSession());
-    console.log(`\nStarted session ${agent.session.id}.`);
+    await agent.loadSession(await sessionStore.createSession({ persona: startupPersona }));
+    console.log(`\nStarted session ${agent.session.id} with ${startupPersona.name}.`);
   }
 
   if (command === "/session") {
@@ -119,14 +126,59 @@ async function handleCommand(inputCommand, agent, sessionStore) {
     }
 
     await agent.loadSession(session);
-    console.log(`\nResumed session ${agent.session.id}: ${agent.session.gist}`);
+    console.log(`\nResumed session ${agent.session.id} with ${agent.session.personaName}: ${agent.session.gist}`);
   }
 
   return true;
 }
 
+async function selectPersona(rl) {
+  const personas = listPersonas();
+
+  console.log("\nChoose an agent persona for this run:");
+
+  personas.forEach((persona, index) => {
+    console.log(`  ${index + 1}. ${persona.name} - ${persona.tagline}`);
+  });
+
+  while (true) {
+    const line = await ask(rl, "\nPersona number or id [1]: ");
+    const answer = line === null ? "" : line.trim();
+
+    if (!answer) {
+      return getDefaultPersona();
+    }
+
+    const selectedByNumber = personas[Number(answer) - 1];
+    const selectedById = getPersona(answer);
+
+    if (selectedByNumber) {
+      return selectedByNumber;
+    }
+
+    if (selectedById.id === answer) {
+      return selectedById;
+    }
+
+    console.log("Please choose one of the listed numbers or persona ids.");
+  }
+}
+
+async function ask(rl, prompt) {
+  try {
+    return await rl.question(prompt);
+  } catch (error) {
+    if (error.code === "ERR_USE_AFTER_CLOSE") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 function printSession(session) {
   console.log(`\nSession: ${session.id}`);
+  console.log(`Persona: ${session.personaName || getPersona(session.personaId).name}`);
   console.log(`Gist: ${session.gist}`);
   console.log(`Messages: ${session.messages.length}`);
   console.log(`Created: ${session.createdAt}`);
@@ -143,7 +195,8 @@ function printSessions(sessions) {
 
   for (const session of sessions.slice(0, 10)) {
     const messageCount = String(session.messages?.length || 0).padStart(2, " ");
-    console.log(`  ${session.id}  ${messageCount} msgs  ${session.gist}`);
+    const personaName = session.personaName || getPersona(session.personaId).name;
+    console.log(`  ${session.id}  ${messageCount} msgs  ${personaName}  ${session.gist}`);
   }
 }
 

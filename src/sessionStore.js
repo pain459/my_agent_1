@@ -9,7 +9,7 @@ export class SessionStore {
     this.directory = resolve(process.cwd(), directory);
   }
 
-  async createSession() {
+  async createSession({ persona } = {}) {
     await this.ensureDirectory();
 
     const now = new Date().toISOString();
@@ -17,6 +17,8 @@ export class SessionStore {
       version: SESSION_SCHEMA_VERSION,
       id: createSessionId(now),
       gist: "New conversation",
+      personaId: persona?.id,
+      personaName: persona?.name,
       createdAt: now,
       updatedAt: now,
       messages: [],

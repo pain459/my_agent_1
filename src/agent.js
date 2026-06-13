@@ -1,14 +1,9 @@
-const DEFAULT_INSTRUCTIONS = [
-  "You are a helpful, practical assistant.",
-  "Ask concise clarifying questions when needed.",
-  "When the user is building software, prefer concrete next steps.",
-].join(" ");
+import { getPersona, getPersonaInstructions } from "./personas.js";
 
 export class Agent {
-  constructor({ client, name, session, sessionStore, instructions = DEFAULT_INSTRUCTIONS }) {
+  constructor({ client, name, session, sessionStore }) {
     this.client = client;
     this.name = name;
-    this.instructions = instructions;
     this.session = session;
     this.sessionStore = sessionStore;
   }
@@ -22,7 +17,7 @@ export class Agent {
     await this.save();
 
     const answer = await this.client.createResponse({
-      instructions: this.instructions,
+      instructions: getPersonaInstructions(this.session.personaId),
       input: this.session.messages.map((message) => ({
         role: message.role,
         content: message.content,
@@ -45,7 +40,13 @@ export class Agent {
   }
 
   async loadSession(session) {
-    this.session = session;
+    const persona = getPersona(session.personaId);
+
+    this.session = {
+      ...session,
+      personaId: persona.id,
+      personaName: persona.name,
+    };
     await this.save();
   }
 
