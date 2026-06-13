@@ -32,6 +32,20 @@ npm start
 
 Type your message and press Enter. Use `/exit` to quit, `/clear` to reset conversation memory, and `/help` to see commands.
 
+## Sessions and Memory
+
+Every chat is saved as a local session under `.agent/sessions/`. Session files are ignored by git because they may contain private conversation data.
+
+Useful commands:
+
+```text
+/session      Show the active session id, gist, and timestamps.
+/sessions     List recent saved sessions with short gists.
+/use <id>     Resume a saved session.
+/new          Start a fresh session.
+/clear        Clear messages in the active session.
+```
+
 ## Project Structure
 
 - `src/cli.js` runs the interactive terminal loop.

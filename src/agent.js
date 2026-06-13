@@ -5,36 +5,52 @@ const DEFAULT_INSTRUCTIONS = [
 ].join(" ");
 
 export class Agent {
-  constructor({ client, name, instructions = DEFAULT_INSTRUCTIONS }) {
+  constructor({ client, name, session, sessionStore, instructions = DEFAULT_INSTRUCTIONS }) {
     this.client = client;
     this.name = name;
     this.instructions = instructions;
-    this.messages = [];
+    this.session = session;
+    this.sessionStore = sessionStore;
   }
 
   async send(userText) {
-    this.messages.push({
+    this.session.messages.push({
       role: "user",
       content: userText,
     });
 
+    await this.save();
+
     const answer = await this.client.createResponse({
       instructions: this.instructions,
-      input: this.messages.map((message) => ({
+      input: this.session.messages.map((message) => ({
         role: message.role,
         content: message.content,
       })),
     });
 
-    this.messages.push({
+    this.session.messages.push({
       role: "assistant",
       content: answer,
     });
 
+    await this.save();
+
     return answer;
   }
 
-  clear() {
-    this.messages = [];
+  async clear() {
+    this.session.messages = [];
+    await this.save();
+  }
+
+  async loadSession(session) {
+    this.session = session;
+    await this.save();
+  }
+
+  async save() {
+    this.session = await this.sessionStore.saveSession(this.session);
+    return this.session;
   }
 }

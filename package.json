@@ -6,7 +6,7 @@
   "description": "A small command-line agent that talks with a user and calls the OpenAI API.",
   "scripts": {
     "start": "node src/cli.js",
-    "check": "node --check src/cli.js && node --check src/agent.js && node --check src/config.js && node --check src/openaiClient.js"
+    "check": "node --check src/cli.js && node --check src/agent.js && node --check src/config.js && node --check src/openaiClient.js && node --check src/sessionStore.js"
   },
   "engines": {
     "node": ">=20"

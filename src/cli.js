@@ -4,15 +4,22 @@ import { stdin as input, stdout as output } from "node:process";
 import { Agent } from "./agent.js";
 import { getConfig } from "./config.js";
 import { OpenAIClient } from "./openaiClient.js";
+import { SessionStore } from "./sessionStore.js";
 
 const COMMANDS = new Map([
   ["/clear", "Reset the in-memory conversation."],
   ["/exit", "Quit the agent."],
   ["/help", "Show available commands."],
+  ["/new", "Start a new session."],
+  ["/session", "Show the current session."],
+  ["/sessions", "List recent sessions."],
+  ["/use", "Resume a saved session. Usage: /use <id>"],
 ]);
 
 async function main() {
   const config = getConfig();
+  const sessionStore = new SessionStore();
+  const session = await sessionStore.createSession();
   const client = new OpenAIClient({
     apiKey: config.apiKey,
     model: config.model,
@@ -21,11 +28,14 @@ async function main() {
   const agent = new Agent({
     client,
     name: config.agentName,
+    session,
+    sessionStore,
   });
 
   const rl = readline.createInterface({ input, output });
 
   console.log(`${agent.name} is ready. Type /help for commands.`);
+  console.log(`Session: ${agent.session.id} - ${agent.session.gist}`);
 
   try {
     while (true) {
@@ -36,7 +46,7 @@ async function main() {
         continue;
       }
 
-      if (await handleCommand(userText, agent)) {
+      if (await handleCommand(userText, agent, sessionStore)) {
         if (userText === "/exit") {
           break;
         }
@@ -56,7 +66,9 @@ async function main() {
   }
 }
 
-async function handleCommand(command, agent) {
+async function handleCommand(inputCommand, agent, sessionStore) {
+  const [command, ...args] = inputCommand.split(/\s+/);
+
   if (!COMMANDS.has(command)) {
     return false;
   }
@@ -69,15 +81,70 @@ async function handleCommand(command, agent) {
   }
 
   if (command === "/clear") {
-    agent.clear();
-    console.log("\nConversation cleared.");
+    await agent.clear();
+    console.log(`\nConversation cleared. Session: ${agent.session.id}`);
   }
 
   if (command === "/exit") {
     console.log("\nGoodbye.");
   }
 
+  if (command === "/new") {
+    await agent.loadSession(await sessionStore.createSession());
+    console.log(`\nStarted session ${agent.session.id}.`);
+  }
+
+  if (command === "/session") {
+    printSession(agent.session);
+  }
+
+  if (command === "/sessions") {
+    const sessions = await sessionStore.listSessions();
+    printSessions(sessions);
+  }
+
+  if (command === "/use") {
+    const id = args[0];
+
+    if (!id) {
+      console.log("\nUsage: /use <session-id>");
+      return true;
+    }
+
+    const session = await sessionStore.getSession(id);
+
+    if (!session) {
+      console.log(`\nNo session found for ${id}.`);
+      return true;
+    }
+
+    await agent.loadSession(session);
+    console.log(`\nResumed session ${agent.session.id}: ${agent.session.gist}`);
+  }
+
   return true;
+}
+
+function printSession(session) {
+  console.log(`\nSession: ${session.id}`);
+  console.log(`Gist: ${session.gist}`);
+  console.log(`Messages: ${session.messages.length}`);
+  console.log(`Created: ${session.createdAt}`);
+  console.log(`Updated: ${session.updatedAt}`);
+}
+
+function printSessions(sessions) {
+  if (sessions.length === 0) {
+    console.log("\nNo saved sessions yet.");
+    return;
+  }
+
+  console.log("\nRecent sessions:");
+
+  for (const session of sessions.slice(0, 10)) {
+    const messageCount = String(session.messages?.length || 0).padStart(2, " ");
+    console.log(`  ${session.id}  ${messageCount} msgs  ${session.gist}`);
+  }
 }
 
 main().catch((error) => {

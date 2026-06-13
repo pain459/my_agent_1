@@ -161,6 +161,9 @@ venv.bak/
 node_modules/
 npm-debug.log*
 
+# Agent runtime memory
+.agent/
+
 # macOS
 .DS_Store
 
