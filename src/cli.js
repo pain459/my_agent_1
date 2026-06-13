@@ -5,12 +5,16 @@ import { Agent } from "./agent.js";
 import { getConfig } from "./config.js";
 import { OpenAIClient } from "./openaiClient.js";
 import { getDefaultPersona, getPersona, listPersonas } from "./personas.js";
+import { QaStore } from "./qaStore.js";
 import { SessionStore } from "./sessionStore.js";
 
 const COMMANDS = new Map([
   ["/clear", "Reset the in-memory conversation."],
   ["/exit", "Quit the agent."],
   ["/help", "Show available commands."],
+  ["/memory-build", "Rebuild the master Q/A database from all sessions."],
+  ["/memory-search", "Search prior Q/A. Usage: /memory-search <question>"],
+  ["/memory-stats", "Show master Q/A database stats and patterns."],
   ["/new", "Start a new session."],
   ["/session", "Show the current session."],
   ["/sessions", "List recent sessions."],
@@ -20,6 +24,7 @@ const COMMANDS = new Map([
 async function main() {
   const config = getConfig();
   const sessionStore = new SessionStore();
+  const qaStore = new QaStore();
   const rl = readline.createInterface({ input, output });
   const startupPersona = await selectPersona(rl);
   const session = await sessionStore.createSession({ persona: startupPersona });
@@ -53,7 +58,7 @@ async function main() {
         continue;
       }
 
-      if (await handleCommand(userText, agent, sessionStore, startupPersona)) {
+      if (await handleCommand(userText, agent, sessionStore, qaStore, startupPersona)) {
         if (userText === "/exit") {
           break;
         }
@@ -62,7 +67,23 @@ async function main() {
       }
 
       try {
+        const memoryAnswer = await findExactMemoryAnswer(qaStore, userText);
+
+        if (memoryAnswer) {
+          await agent.recordExchange(userText, memoryAnswer.answer, {
+            source: "qa-memory",
+            qaRecordId: memoryAnswer.id,
+          });
+          console.log(`\n${agent.name} [memory]: ${memoryAnswer.answer || "(No text response returned.)"}`);
+          continue;
+        }
+
         const response = await agent.send(userText);
+        await qaStore.addExchange({
+          session: agent.session,
+          question: userText,
+          answer: response,
+        });
         console.log(`\n${agent.name}: ${response || "(No text response returned.)"}`);
       } catch (error) {
         console.error(`\nError: ${error.message}`);
@@ -73,7 +94,7 @@ async function main() {
   }
 }
 
-async function handleCommand(inputCommand, agent, sessionStore, startupPersona) {
+async function handleCommand(inputCommand, agent, sessionStore, qaStore, startupPersona) {
   const [command, ...args] = inputCommand.split(/\s+/);
 
   if (!COMMANDS.has(command)) {
@@ -85,6 +106,26 @@ async function handleCommand(inputCommand, agent, sessionStore, startupPersona) 
     for (const [name, description] of COMMANDS) {
       console.log(`  ${name.padEnd(8)} ${description}`);
     }
+  }
+
+  if (command === "/memory-build") {
+    const database = await qaStore.buildFromSessions(await sessionStore.listSessions());
+    console.log(`\nBuilt master Q/A database with ${database.recordCount} records.`);
+  }
+
+  if (command === "/memory-search") {
+    const question = args.join(" ");
+
+    if (!question) {
+      console.log("\nUsage: /memory-search <question>");
+      return true;
+    }
+
+    printMemorySearchResults(await qaStore.search(question));
+  }
+
+  if (command === "/memory-stats") {
+    printMemoryStats(await qaStore.stats());
   }
 
   if (command === "/clear") {
@@ -130,6 +171,16 @@ async function handleCommand(inputCommand, agent, sessionStore, startupPersona) 
   }
 
   return true;
+}
+
+async function findExactMemoryAnswer(qaStore, question) {
+  const [match] = await qaStore.search(question, { limit: 1 });
+
+  if (match?.score === 1) {
+    return match;
+  }
+
+  return null;
 }
 
 async function selectPersona(rl) {
@@ -198,6 +249,50 @@ function printSessions(sessions) {
     const personaName = session.personaName || getPersona(session.personaId).name;
     console.log(`  ${session.id}  ${messageCount} msgs  ${personaName}  ${session.gist}`);
   }
+}
+
+function printMemorySearchResults(results) {
+  if (results.length === 0) {
+    console.log("\nNo prior answers found.");
+    return;
+  }
+
+  console.log("\nPrior answers:");
+
+  for (const result of results) {
+    const score = Math.round(result.score * 100);
+    console.log(`\n${score}%  ${result.personaName || "Unknown persona"}  ${result.sessionId}`);
+    console.log(`Q: ${result.question}`);
+    console.log(`A: ${truncateForDisplay(result.answer, 400)}`);
+  }
+}
+
+function printMemoryStats(stats) {
+  console.log("\nMaster Q/A database:");
+  console.log(`Records: ${stats.recordCount}`);
+  console.log(`Updated: ${stats.updatedAt}`);
+
+  if (stats.repeatedQuestions.length > 0) {
+    console.log("\nRepeated questions:");
+    for (const item of stats.repeatedQuestions) {
+      console.log(`  ${item.count}x  ${item.question}`);
+    }
+  }
+
+  if (stats.topKeywords.length > 0) {
+    console.log("\nCommon keywords:");
+    console.log(`  ${stats.topKeywords.map((item) => `${item.keyword}(${item.count})`).join(", ")}`);
+  }
+}
+
+function truncateForDisplay(text, maxLength) {
+  const compact = String(text).replace(/\s+/g, " ").trim();
+
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+
+  return `${compact.slice(0, maxLength - 3).trim()}...`;
 }
 
 main().catch((error) => {

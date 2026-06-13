@@ -56,6 +56,10 @@ Every chat is saved as a local session under `.agent/sessions/`. Session files a
 Useful commands:
 
 ```text
+/memory-build Rebuild the master Q/A database from all sessions.
+/memory-search <question>
+              Search prior Q/A records for similar questions.
+/memory-stats Show record count, repeated questions, and common keywords.
 /session      Show the active session id, gist, and timestamps.
 /sessions     List recent saved sessions with short gists.
 /use <id>     Resume a saved session.
@@ -63,12 +67,25 @@ Useful commands:
 /clear        Clear messages in the active session.
 ```
 
+## Master Q/A Database
+
+Sessions remain the raw JSON memory. The master Q/A database is a derived index at `.agent/qa-index.json` that extracts user question and assistant answer pairs from all sessions.
+
+Build or rebuild it without starting chat:
+
+```bash
+npm run memory:build
+```
+
+During chat, exact repeated questions are answered from this master memory before making a new OpenAI API call. Similar questions are available through `/memory-search`, and broad patterns are visible through `/memory-stats`.
+
 ## Project Structure
 
 - `src/cli.js` runs the interactive terminal loop.
 - `src/agent.js` owns conversation state and agent behavior.
 - `src/openaiClient.js` wraps OpenAI API calls.
 - `src/personas.js` defines available agent personalities.
+- `src/qaStore.js` builds and searches the master Q/A database.
 - `src/config.js` loads environment configuration.
 
 ## Notes

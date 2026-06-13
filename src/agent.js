@@ -12,6 +12,7 @@ export class Agent {
     this.session.messages.push({
       role: "user",
       content: userText,
+      createdAt: new Date().toISOString(),
     });
 
     await this.save();
@@ -27,11 +28,29 @@ export class Agent {
     this.session.messages.push({
       role: "assistant",
       content: answer,
+      createdAt: new Date().toISOString(),
     });
 
     await this.save();
 
     return answer;
+  }
+
+  async recordExchange(userText, assistantText, metadata = {}) {
+    this.session.messages.push({
+      role: "user",
+      content: userText,
+      createdAt: new Date().toISOString(),
+      metadata,
+    });
+    this.session.messages.push({
+      role: "assistant",
+      content: assistantText,
+      createdAt: new Date().toISOString(),
+      metadata,
+    });
+
+    await this.save();
   }
 
   async clear() {
