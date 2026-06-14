@@ -1,23 +1,19 @@
 const els = {
-  approvedList: document.querySelector("#approvedList"),
   clearConfirmation: document.querySelector("#clearConfirmation"),
   clearTarget: document.querySelector("#clearTarget"),
-  discardList: document.querySelector("#discardList"),
-  exportTrainingButton: document.querySelector("#exportTrainingButton"),
-  extractKnowledgeButton: document.querySelector("#extractKnowledgeButton"),
-  flushDiscardButton: document.querySelector("#flushDiscardButton"),
-  forceKnowledgeBuild: document.querySelector("#forceKnowledgeBuild"),
-  ingestionList: document.querySelector("#ingestionList"),
-  knowledgeSearchButton: document.querySelector("#knowledgeSearchButton"),
-  knowledgeSearchInput: document.querySelector("#knowledgeSearchInput"),
+  contextResults: document.querySelector("#contextResults"),
+  contextSearchButton: document.querySelector("#contextSearchButton"),
+  contextSearchInput: document.querySelector("#contextSearchInput"),
+  contextStatus: document.querySelector("#contextStatus"),
   logList: document.querySelector("#logList"),
   masterClearButton: document.querySelector("#masterClearButton"),
+  personaStats: document.querySelector("#personaStats"),
   progressBar: document.querySelector("#progressBar"),
-  refreshIngestionButton: document.querySelector("#refreshIngestionButton"),
-  refreshApprovedButton: document.querySelector("#refreshApprovedButton"),
+  rebuildContextButton: document.querySelector("#rebuildContextButton"),
+  recentSessions: document.querySelector("#recentSessions"),
   refreshLogsButton: document.querySelector("#refreshLogsButton"),
-  refreshReviewButton: document.querySelector("#refreshReviewButton"),
-  reviewList: document.querySelector("#reviewList"),
+  refreshStatsButton: document.querySelector("#refreshStatsButton"),
+  summaryCards: document.querySelector("#summaryCards"),
   themeToggle: document.querySelector("#themeToggle"),
   toast: document.querySelector("#toast"),
 };
@@ -27,87 +23,36 @@ setupTheme();
 await refreshAll();
 
 function bindEvents() {
-  els.extractKnowledgeButton.addEventListener("click", extractKnowledge);
-  els.refreshIngestionButton.addEventListener("click", refreshIngestion);
-  els.refreshApprovedButton.addEventListener("click", refreshApproved);
-  els.refreshReviewButton.addEventListener("click", refreshReview);
-  els.knowledgeSearchButton.addEventListener("click", searchKnowledge);
-  els.flushDiscardButton.addEventListener("click", flushDiscard);
-  els.exportTrainingButton.addEventListener("click", exportTraining);
+  els.refreshStatsButton.addEventListener("click", refreshStats);
+  els.rebuildContextButton.addEventListener("click", rebuildContext);
+  els.contextSearchButton.addEventListener("click", searchContext);
   els.masterClearButton.addEventListener("click", masterClear);
   els.refreshLogsButton.addEventListener("click", refreshLogs);
   els.themeToggle.addEventListener("click", toggleTheme);
 }
 
 async function refreshAll() {
-  await Promise.all([
-    refreshIngestion(),
-    refreshReview(),
-    refreshApproved(),
-    refreshDiscard(),
-    refreshLogs(),
-  ]);
+  await Promise.all([refreshStats(), refreshLogs()]);
 }
 
-async function extractKnowledge() {
-  await runBusy("Extracting knowledge...", async () => {
-    const data = await api("/api/knowledge/extract", {
-      method: "POST",
-      body: { force: els.forceKnowledgeBuild.checked },
-    });
-    toast(`Extracted ${data.extractedCount}; queued ${data.addedCount}; skipped ${data.skippedCount}.`);
-    await Promise.all([refreshIngestion(), refreshReview(), refreshLogs()]);
+async function refreshStats() {
+  const data = await api("/api/stats");
+  renderStats(data.stats);
+}
+
+async function rebuildContext() {
+  await runBusy("Rebuilding index...", async () => {
+    const data = await api("/api/session-context/rebuild", { method: "POST" });
+    toast(`Indexed ${data.chunkCount} session chunks.`);
+    await refreshStats();
+    await refreshLogs();
   });
 }
 
-async function refreshIngestion() {
-  const data = await api("/api/knowledge/ingestion");
-  els.ingestionList.innerHTML = data.sessions.map((session) => `
-    <div class="item">
-      <div class="item-title">${escapeHtml(session.sessionId)} · ${escapeHtml(session.status)}</div>
-      <p class="muted">${session.messageCount} messages · queued ${session.itemsAdded || 0} · ${escapeHtml(session.lastIngestedAt || "never ingested")}</p>
-    </div>
-  `).join("") || empty("No sessions found.");
-}
-
-async function refreshReview() {
-  const data = await api("/api/knowledge/review");
-  renderReview(data.items);
-}
-
-async function reviewAction(id, action) {
-  await api(`/api/knowledge/review/${encodeURIComponent(id)}/${action}`, { method: "POST" });
-  await Promise.all([refreshReview(), refreshApproved(), refreshDiscard(), refreshLogs()]);
-}
-
-async function refreshApproved() {
-  const data = await api("/api/knowledge/approved");
-  renderApproved(data.items);
-}
-
-async function searchKnowledge() {
-  const query = els.knowledgeSearchInput.value.trim();
-  const data = await api(`/api/knowledge/search?q=${encodeURIComponent(query)}`);
-  renderApproved(data.results);
-}
-
-async function refreshDiscard() {
-  const data = await api("/api/discard-bin");
-  renderDiscard(data.items);
-}
-
-async function flushDiscard() {
-  await runBusy("Flushing discarded data...", async () => {
-    const data = await api("/api/discard-bin/flush", { method: "POST" });
-    toast(`Discard bin flushed. ${data.itemCount} items remain.`);
-    await Promise.all([refreshDiscard(), refreshLogs()]);
-  });
-}
-
-async function exportTraining() {
-  const data = await api("/api/training/export", { method: "POST" });
-  toast(`Exported ${data.recordCount} records.`);
-  await refreshLogs();
+async function searchContext() {
+  const query = els.contextSearchInput.value.trim();
+  const data = await api(`/api/session-context/search?q=${encodeURIComponent(query)}`);
+  renderContextResults(data.results);
 }
 
 async function masterClear() {
@@ -120,6 +65,7 @@ async function masterClear() {
       body: { target, confirmation },
     });
     els.clearConfirmation.value = "";
+    els.contextResults.innerHTML = "";
     await refreshAll();
     toast(`Cleared ${target}.`);
   } catch (error) {
@@ -132,46 +78,53 @@ async function refreshLogs() {
   renderLogs(data.logs);
 }
 
-function renderReview(items) {
-  els.reviewList.innerHTML = items.map((item) => `
-    <div class="item">
-      <div class="item-title">${escapeHtml(item.type)} · confidence ${escapeHtml(String(item.confidence ?? ""))}</div>
-      <p><strong>Question:</strong> ${escapeHtml(item.sourceQuestion || "")}</p>
-      <p><strong>Answer:</strong> ${escapeHtml(item.sourceAnswer || "")}</p>
-      <p class="full-text"><strong>Extracted:</strong> ${escapeHtml(item.text)}</p>
-      <p class="muted">${escapeHtml(item.id)} · source ${escapeHtml(item.sourceSessionId || "unknown")}</p>
-      <div class="item-actions">
-        <button type="button" data-review-action="approve" data-review-id="${escapeHtml(item.id)}">Approve</button>
-        <button type="button" data-review-action="reject" data-review-id="${escapeHtml(item.id)}">Reject</button>
-      </div>
+function renderStats(stats) {
+  const summary = stats.summary || {};
+  els.summaryCards.innerHTML = [
+    ["Sessions", summary.totalSessions],
+    ["Messages", summary.totalMessages],
+    ["User Messages", summary.userMessages],
+    ["Assistant Messages", summary.assistantMessages],
+    ["Indexed Chunks", summary.indexedChunks],
+    ["Latest Chat", summary.latestChatAt || "none"],
+  ].map(([label, value]) => `
+    <div class="metric-card">
+      <div class="metric-value">${escapeHtml(value ?? 0)}</div>
+      <div class="metric-label">${escapeHtml(label)}</div>
     </div>
-  `).join("") || empty("No review candidates queued.");
+  `).join("");
 
-  els.reviewList.querySelectorAll("[data-review-action]").forEach((button) => {
-    button.addEventListener("click", () => reviewAction(button.dataset.reviewId, button.dataset.reviewAction));
-  });
+  const index = stats.sessionIndex || {};
+  els.contextStatus.innerHTML = `
+    <div class="item">
+      <div class="item-title">${index.exists ? "Index present" : "Index missing"}</div>
+      <p class="muted">${escapeHtml(String(index.chunkCount || 0))} chunks · updated ${escapeHtml(index.updatedAt || "never")}</p>
+    </div>
+  `;
+
+  els.personaStats.innerHTML = (stats.personas || []).map((persona) => `
+    <div class="item">
+      <div class="item-title">${escapeHtml(persona.personaName || persona.personaId)}</div>
+      <p class="muted">${persona.sessionCount} sessions · ${persona.messageCount} messages</p>
+    </div>
+  `).join("") || empty("No persona activity yet.");
+
+  els.recentSessions.innerHTML = (stats.recentSessions || []).map((session) => `
+    <div class="item">
+      <div class="item-title">${escapeHtml(session.title || session.gist || session.id)}</div>
+      <p class="muted">${escapeHtml(session.personaName || session.personaId || "unknown")} · ${session.messageCount} messages · ${escapeHtml(session.updatedAt || "")}</p>
+    </div>
+  `).join("") || empty("No sessions yet.");
 }
 
-function renderApproved(items) {
-  els.approvedList.innerHTML = items.map((item) => `
+function renderContextResults(results) {
+  els.contextResults.innerHTML = results.map((result) => `
     <div class="item">
-      <div class="item-title">${escapeHtml(item.type)}${item.score ? ` · ${Math.round(item.score * 100)}% match` : ""}</div>
-      <p class="full-text">${escapeHtml(item.text)}</p>
-      <p><strong>Source question:</strong> ${escapeHtml(item.sourceQuestion || "")}</p>
-      <p class="muted">${escapeHtml(item.id)} · active since ${escapeHtml(item.approvedAt || "")}</p>
+      <div class="item-title">${Math.round(result.score * 100)}% match · ${escapeHtml(result.sessionTitle || result.sessionId)}</div>
+      <p class="full-text">${escapeHtml(result.preview || result.text || "")}</p>
+      <p class="muted">${escapeHtml(result.id)} · ${escapeHtml(result.personaName || result.personaId || "unknown")}</p>
     </div>
-  `).join("") || empty("No active knowledge yet.");
-}
-
-function renderDiscard(items) {
-  els.discardList.innerHTML = items.map((item) => `
-    <div class="item">
-      <div class="item-title">${escapeHtml(item.type)} · rejected</div>
-      <p class="full-text">${escapeHtml(item.text)}</p>
-      <p><strong>Source question:</strong> ${escapeHtml(item.sourceQuestion || "")}</p>
-      <p class="muted">${escapeHtml(item.id)} · rejected ${escapeHtml(item.rejectedAt || "")}</p>
-    </div>
-  `).join("") || empty("No rejected items waiting to flush.");
+  `).join("") || empty("No relevant session context found.");
 }
 
 function renderLogs(logs) {
@@ -224,7 +177,7 @@ function setBusy(isBusy, label = "Working...") {
       button.disabled = isBusy;
     }
   });
-  els.extractKnowledgeButton.textContent = isBusy ? label : "Extract New/Changed";
+  els.rebuildContextButton.textContent = isBusy ? label : "Rebuild Index";
 }
 
 function setupTheme() {

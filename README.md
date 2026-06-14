@@ -1,6 +1,6 @@
 # My Agent 1
 
-A local OpenAI-backed agent workspace with persistent sessions, reviewed knowledge, active local knowledge search, and separate chat/admin web pages.
+A local OpenAI-backed agent workspace with persistent sessions, session-context retrieval, and separate chat/stats web pages.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ npm run web
 
 Open `http://localhost:3000`.
 
-The chat UI is at `/`. Administrative controls are separated at:
+The chat UI is at `/`. Chat stats and diagnostics are at:
 
 ```text
 http://localhost:3000/admin.html
@@ -42,7 +42,7 @@ http://localhost:3000/admin.html
 
 `npm start` also runs the Python web backend.
 
-The UI is the primary workspace, served by `py_backend/server.py`. The admin page contains training, knowledge, memory, logs, export, ingestion status, and guarded clear controls.
+The UI is the primary workspace, served by `py_backend/server.py`. The stats page shows session counts, message counts, persona activity, session-context index diagnostics, logs, and guarded clear controls.
 
 ## Personas
 
@@ -65,34 +65,23 @@ coach       Reflective Coach
 
 Every chat is saved as a local session under `.agent/sessions/`. Session files are ignored by git because they may contain private conversation data.
 
-## Knowledge Pipeline
+## Session Context
 
-Knowledge has a controlled lifecycle:
+Sessions are the memory source of truth:
 
 ```text
-sessions -> review queue -> approved knowledge -> local answers or OpenAI context
+sessions -> session context index -> relevant prior context -> OpenAI answer
 ```
 
-- `.agent/knowledge-review.json` stores extracted candidates waiting for approval or rejection.
-- `.agent/knowledge.json` stores approved knowledge that is active immediately after approval.
-- `.agent/discard-bin.json` stores rejected candidates until you flush discarded data.
-- `.agent/knowledge-ingestion.json` tracks which sessions were extracted and skips unchanged sessions unless force re-ingest is enabled.
+- `.agent/sessions/` stores raw chat sessions.
+- `.agent/session-index.json` stores searchable user/assistant conversation chunks.
+- The index is updated after each chat exchange and can be rebuilt from the stats page.
 
-When approved knowledge has a strong local match, the agent answers locally and marks the response source as `knowledge`. Medium-confidence matches are sent to OpenAI as approved context and marked as `openai-with-knowledge`. If there is no useful match, the agent calls OpenAI normally.
-
-## Training Export
-
-Export approved knowledge as JSONL for future fine-tuning preparation:
-
-```bash
-npm run training:export
-```
-
-The export writes `.agent/exports/training.jsonl`. It uses approved knowledge only and does not start a fine-tuning job.
+When a user asks a question, the backend searches prior session chunks. If relevant chunks are found, they are sent to OpenAI as context and the response source is `openai-with-session-context`. If no useful chunks are found, the response source is `openai`.
 
 ## Deleting Memory
 
-Rejecting a review candidate moves it to the discard bin. Flushing discarded data permanently clears rejected candidates. Larger clear operations are guarded by confirmation phrases. `memory` clears `.agent/knowledge-review.json`, `.agent/knowledge.json`, `.agent/discard-bin.json`, `.agent/knowledge-ingestion.json`, and legacy `.agent/memory.json` / `.agent/qa-index.json` if present. `chats` clears `.agent/sessions/`. `all` does both.
+Larger clear operations are guarded by confirmation phrases. `memory` clears legacy knowledge/memory files. `chats` clears `.agent/sessions/` and `.agent/session-index.json`. `all` does both.
 
 ## Project Structure
 

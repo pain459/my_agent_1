@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>My Agent 1 Admin</title>
+    <title>My Agent 1 Stats</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <div class="admin-shell">
       <header class="admin-header">
         <div>
-          <h1>Admin Controls</h1>
-          <p class="muted">Memory, knowledge review, logs, exports, and guarded data clearing.</p>
+          <h1>Agent Stats</h1>
+          <p class="muted">Read-only chat health, session context diagnostics, and logs.</p>
         </div>
         <div class="button-row">
           <a class="nav-link" href="/">Chat UI</a>
@@ -21,44 +21,34 @@
 
       <main class="admin-grid">
         <section class="panel">
-          <h2>Ingestion</h2>
-          <div class="button-row">
-            <button id="extractKnowledgeButton" type="button">Extract New/Changed</button>
-            <button id="refreshIngestionButton" type="button">Refresh</button>
+          <div class="panel-header">
+            <h2>Summary</h2>
+            <button id="refreshStatsButton" type="button">Refresh</button>
           </div>
-          <label class="check-row">
-            <input id="forceKnowledgeBuild" type="checkbox">
-            Force re-ingest already processed sessions
-          </label>
-          <div id="ingestionList" class="results"></div>
+          <div id="summaryCards" class="metric-grid"></div>
         </section>
 
         <section class="panel">
           <div class="panel-header">
-            <h2>Review Queue</h2>
-            <button id="refreshReviewButton" type="button">Refresh</button>
+            <h2>Session Context</h2>
+            <button id="rebuildContextButton" type="button">Rebuild Index</button>
           </div>
-          <div id="reviewList" class="results tall"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Active Knowledge</h2>
-            <button id="refreshApprovedButton" type="button">Refresh</button>
-          </div>
+          <div id="contextStatus" class="results"></div>
           <div class="search-row">
-            <input id="knowledgeSearchInput" type="search" placeholder="Search active knowledge">
-            <button id="knowledgeSearchButton" type="button">Search</button>
+            <input id="contextSearchInput" type="search" placeholder="Preview retrieved context">
+            <button id="contextSearchButton" type="button">Search</button>
           </div>
-          <div id="approvedList" class="results tall"></div>
+          <div id="contextResults" class="results tall"></div>
         </section>
 
         <section class="panel">
-          <div class="panel-header">
-            <h2>Discard Bin</h2>
-            <button id="flushDiscardButton" type="button">Flush Discarded Data</button>
-          </div>
-          <div id="discardList" class="results tall"></div>
+          <h2>Personas</h2>
+          <div id="personaStats" class="results"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Recent Sessions</h2>
+          <div id="recentSessions" class="results tall"></div>
         </section>
 
         <section class="panel">
@@ -70,10 +60,9 @@
         </section>
 
         <section class="panel danger">
-          <h2>Data Administration</h2>
-          <button id="exportTrainingButton" type="button">Export Training JSONL</button>
+          <h2>Danger Zone</h2>
           <select id="clearTarget">
-            <option value="memory">Memory</option>
+            <option value="memory">Legacy Memory</option>
             <option value="chats">Chats</option>
             <option value="all">All</option>
           </select>

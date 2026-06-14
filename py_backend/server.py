@@ -22,6 +22,7 @@ ROOT = Path.cwd()
 PUBLIC_DIR = ROOT / "public"
 AGENT_DIR = ROOT / ".agent"
 SESSIONS_DIR = AGENT_DIR / "sessions"
+SESSION_INDEX_PATH = AGENT_DIR / "session-index.json"
 QA_INDEX_PATH = AGENT_DIR / "qa-index.json"
 KNOWLEDGE_REVIEW_PATH = AGENT_DIR / "knowledge-review.json"
 KNOWLEDGE_PATH = AGENT_DIR / "knowledge.json"
@@ -38,6 +39,8 @@ DEFAULT_PORT = 3000
 VALID_KNOWLEDGE_TYPES = {"fact", "preference", "decision", "procedure", "correction", "example"}
 KNOWLEDGE_LOCAL_ANSWER_THRESHOLD = 0.72
 KNOWLEDGE_CONTEXT_THRESHOLD = 0.30
+SESSION_CONTEXT_THRESHOLD = 0.20
+SESSION_CONTEXT_LIMIT = 3
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "how", "i", "in", "is", "it", "of", "on", "or", "our", "so", "the",
@@ -248,6 +251,10 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_space(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
 def keywords(text: str) -> list[str]:
     return [word for word in normalize_text(text).split() if len(word) > 2 and word not in STOP_WORDS]
 
@@ -360,6 +367,12 @@ def clear_sessions() -> None:
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def clear_session_index() -> dict:
+    database = session_index_database([])
+    write_json(SESSION_INDEX_PATH, database)
+    return database
+
+
 def openai_response(instructions: str, input_value, model: str | None = None, reasoning_effort: str | None = None) -> str:
     api_key = CONFIG["api_key"]
     if not api_key:
@@ -449,6 +462,200 @@ def record_exchange(session: dict, user_text: str, assistant_text: str, metadata
         },
     ])
     return save_session(session)
+
+
+def session_index_database(chunks: list[dict] | None = None) -> dict:
+    chunks = chunks or []
+    return {"version": 1, "updatedAt": now_iso(), "chunkCount": len(chunks), "chunks": chunks}
+
+
+def load_session_index() -> dict:
+    if not SESSION_INDEX_PATH.exists():
+        return build_session_index()
+    return read_json(SESSION_INDEX_PATH, lambda: session_index_database())
+
+
+def save_session_index(database: dict) -> dict:
+    database["updatedAt"] = now_iso()
+    database["chunkCount"] = len(database.get("chunks", []))
+    write_json(SESSION_INDEX_PATH, database)
+    return database
+
+
+def session_display_title(session: dict) -> str:
+    return str(session.get("title") or session.get("gist") or session.get("id") or "Untitled session")
+
+
+def create_session_chunk(session: dict, user_index: int, assistant_index: int, user_message: dict, assistant_message: dict) -> dict:
+    user_text = str(user_message.get("content", "")).strip()
+    assistant_text = str(assistant_message.get("content", "")).strip()
+    session_title = session_display_title(session)
+    persona_name = session.get("personaName") or persona_for(session.get("personaId")).get("name")
+    text = "\n".join([
+        f"Session: {session_title}",
+        f"Persona: {persona_name}",
+        f"User: {user_text}",
+        f"Assistant: {assistant_text}",
+    ])
+    search_text = " ".join([session_title, str(persona_name), user_text, assistant_text])
+    return {
+        "id": f"{session['id']}:{user_index}-{assistant_index}",
+        "sessionId": session["id"],
+        "sessionTitle": session_title,
+        "sessionGist": session.get("gist"),
+        "personaId": session.get("personaId"),
+        "personaName": persona_name,
+        "messageIds": [str(user_index), str(assistant_index)],
+        "messages": [
+            {"role": "user", "content": user_text, "createdAt": user_message.get("createdAt")},
+            {"role": "assistant", "content": assistant_text, "createdAt": assistant_message.get("createdAt")},
+        ],
+        "text": text,
+        "keywords": keywords(search_text),
+        "createdAt": user_message.get("createdAt") or session.get("createdAt") or now_iso(),
+        "updatedAt": assistant_message.get("createdAt") or session.get("updatedAt") or now_iso(),
+    }
+
+
+def extract_session_chunks(session: dict) -> list[dict]:
+    messages = session.get("messages", [])
+    chunks = []
+    for index in range(len(messages) - 1):
+        current = messages[index]
+        following = messages[index + 1]
+        if current.get("role") == "user" and following.get("role") == "assistant":
+            user_text = str(current.get("content", "")).strip()
+            assistant_text = str(following.get("content", "")).strip()
+            if user_text and assistant_text:
+                chunks.append(create_session_chunk(session, index, index + 1, current, following))
+    return chunks
+
+
+def build_session_index() -> dict:
+    chunks = []
+    for session in list_sessions():
+        chunks.extend(extract_session_chunks(session))
+    database = session_index_database(chunks)
+    write_json(SESSION_INDEX_PATH, database)
+    return database
+
+
+def update_session_index(session: dict) -> dict:
+    database = load_session_index()
+    chunks = [chunk for chunk in database.get("chunks", []) if chunk.get("sessionId") != session.get("id")]
+    chunks.extend(extract_session_chunks(session))
+    database["chunks"] = sorted(chunks, key=lambda item: item.get("updatedAt", ""), reverse=True)
+    return save_session_index(database)
+
+
+def remove_session_from_index(session_id: str) -> dict:
+    database = load_session_index()
+    database["chunks"] = [chunk for chunk in database.get("chunks", []) if chunk.get("sessionId") != session_id]
+    return save_session_index(database)
+
+
+def session_context_score(chunk: dict, query: str, query_keywords: list[str], normalized_query: str) -> float:
+    text = str(chunk.get("text", ""))
+    normalized_text = normalize_text(text)
+    if normalized_query and normalized_query in normalized_text:
+        return 1.0
+    messages = chunk.get("messages", [])
+    fields = [
+        chunk.get("keywords", []),
+        keywords(chunk.get("sessionTitle", "")),
+        keywords(chunk.get("sessionGist", "")),
+        keywords(chunk.get("personaId", "")),
+        keywords(chunk.get("personaName", "")),
+    ]
+    fields.extend(keywords(message.get("content", "")) for message in messages)
+    return max((jaccard(field, query_keywords) for field in fields if field), default=0.0)
+
+
+def search_session_context(query: str, limit: int = SESSION_CONTEXT_LIMIT, exclude_session_id: str | None = None, threshold: float = SESSION_CONTEXT_THRESHOLD) -> list[dict]:
+    normalized_query = normalize_text(query)
+    query_keywords = keywords(query)
+    if not normalized_query and not query_keywords:
+        return []
+    database = load_session_index()
+    results = []
+    for chunk in database.get("chunks", []):
+        if exclude_session_id and chunk.get("sessionId") == exclude_session_id:
+            continue
+        score = session_context_score(chunk, query, query_keywords, normalized_query)
+        if score >= threshold:
+            preview = normalize_space(chunk.get("text", ""))[:220]
+            results.append({**chunk, "score": score, "preview": preview})
+    return sorted(results, key=lambda item: (item["score"], item.get("updatedAt", "")), reverse=True)[:limit]
+
+
+def session_context_text(chunks: list[dict]) -> str:
+    if not chunks:
+        return ""
+    lines = [
+        "Relevant prior session context follows. Use it only when it helps answer the current user. Do not claim it is certain if the context is weak.",
+    ]
+    for index, chunk in enumerate(chunks, start=1):
+        lines.extend([
+            f"\nContext {index}: session {chunk.get('sessionId')} · persona {chunk.get('personaName') or chunk.get('personaId')} · updated {chunk.get('updatedAt')}",
+            f"User: {chunk.get('messages', [{}])[0].get('content', '')}",
+            f"Assistant: {chunk.get('messages', [{}, {}])[1].get('content', '') if len(chunk.get('messages', [])) > 1 else ''}",
+        ])
+    return "\n".join(lines)
+
+
+def session_stats() -> dict:
+    sessions = list_sessions()
+    total_messages = 0
+    user_messages = 0
+    assistant_messages = 0
+    latest_chat_at = None
+    persona_counts = {}
+    recent_sessions = []
+    for session in sessions:
+        messages = session.get("messages", [])
+        total_messages += len(messages)
+        user_messages += len([message for message in messages if message.get("role") == "user"])
+        assistant_messages += len([message for message in messages if message.get("role") == "assistant"])
+        updated_at = session.get("updatedAt")
+        if updated_at and (latest_chat_at is None or updated_at > latest_chat_at):
+            latest_chat_at = updated_at
+        persona_id = session.get("personaId") or "unknown"
+        persona_counts.setdefault(persona_id, {
+            "personaId": persona_id,
+            "personaName": session.get("personaName") or persona_for(persona_id).get("name") if persona_id in PERSONA_BY_ID else "Unknown",
+            "sessionCount": 0,
+            "messageCount": 0,
+        })
+        persona_counts[persona_id]["sessionCount"] += 1
+        persona_counts[persona_id]["messageCount"] += len(messages)
+        recent_sessions.append({
+            "id": session.get("id"),
+            "title": session.get("title"),
+            "gist": session.get("gist"),
+            "personaId": persona_id,
+            "personaName": session.get("personaName"),
+            "messageCount": len(messages),
+            "updatedAt": updated_at,
+        })
+    index_exists = SESSION_INDEX_PATH.exists()
+    index = load_session_index()
+    return {
+        "summary": {
+            "totalSessions": len(sessions),
+            "totalMessages": total_messages,
+            "userMessages": user_messages,
+            "assistantMessages": assistant_messages,
+            "indexedChunks": len(index.get("chunks", [])),
+            "latestChatAt": latest_chat_at,
+        },
+        "personas": sorted(persona_counts.values(), key=lambda item: item["sessionCount"], reverse=True),
+        "sessionIndex": {
+            "exists": index_exists,
+            "updatedAt": index.get("updatedAt"),
+            "chunkCount": len(index.get("chunks", [])),
+        },
+        "recentSessions": sorted(recent_sessions, key=lambda item: item.get("updatedAt") or "", reverse=True)[:10],
+    }
 
 
 def clear_qa() -> dict:
@@ -1002,6 +1209,7 @@ def master_clear(target: str, confirmation: str) -> dict:
         save_ingestion({"version": 1, "updatedAt": now_iso(), "sessions": {}})
     if target in {"chats", "all"}:
         clear_sessions()
+        clear_session_index()
     return {"cleared": target}
 
 
@@ -1040,6 +1248,17 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         if route == "GET /api/personas":
             self.send_json(200, {"personas": PERSONAS})
             return
+        if route == "GET /api/stats":
+            self.send_json(200, {"stats": session_stats()})
+            return
+        if route == "GET /api/session-context/search":
+            self.send_json(200, {"results": search_session_context(query.get("q", [""])[0])})
+            return
+        if route == "POST /api/session-context/rebuild":
+            database = build_session_index()
+            append_log("info", "session_context_rebuilt", {"chunkCount": database["chunkCount"]})
+            self.send_json(200, {"chunkCount": database["chunkCount"], "updatedAt": database["updatedAt"]})
+            return
         if route == "GET /api/sessions":
             self.send_json(200, {"sessions": list_sessions()})
             return
@@ -1060,6 +1279,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             deleted = delete_session(session_match.group(1))
             if not deleted:
                 raise HttpError(404, "Session not found.")
+            remove_session_from_index(deleted["id"])
             append_log("info", "session_deleted", {"sessionId": deleted["id"]})
             self.send_json(200, {"deleted": deleted})
             return
@@ -1069,6 +1289,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             session = rename_session(rename_match.group(1), body.get("title", ""))
             if not session:
                 raise HttpError(404, "Session not found.")
+            update_session_index(session)
             append_log("info", "session_renamed", {"sessionId": session["id"], "title": session.get("title")})
             self.send_json(200, {"session": session})
             return
@@ -1077,6 +1298,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             session = require_session(clear_match.group(1))
             session["messages"] = []
             session = save_session(session)
+            remove_session_from_index(session["id"])
             append_log("info", "session_cleared", {"sessionId": session["id"]})
             self.send_json(200, {"session": session})
             return
@@ -1138,19 +1360,26 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         message = str(body.get("message", "")).strip()
         if not message:
             raise HttpError(400, "Message is required.")
-        knowledge_matches = search_approved_knowledge(message, limit=5)
-        strongest_match = knowledge_matches[0] if knowledge_matches else None
-        if strongest_match and strongest_match.get("score", 0) >= KNOWLEDGE_LOCAL_ANSWER_THRESHOLD:
-            session = record_exchange(session, message, strongest_match["text"], {"source": "knowledge", "knowledgeId": strongest_match["id"], "score": strongest_match["score"]})
-            append_log("info", "chat_answered_from_knowledge", {"sessionId": session["id"], "knowledgeId": strongest_match["id"], "score": strongest_match["score"]})
-            self.send_json(200, {"source": "knowledge", "answer": strongest_match["text"], "session": session, "match": strongest_match})
-            return
-        contextual_matches = [item for item in knowledge_matches if item.get("score", 0) >= KNOWLEDGE_CONTEXT_THRESHOLD]
-        known_knowledge = known_memory_text(contextual_matches)
-        answer, session = send_agent_message(session, message, known_knowledge)
-        source = "openai-with-knowledge" if contextual_matches else "openai"
-        append_log("info", "chat_answered_from_openai", {"sessionId": session["id"], "knowledgeContextCount": len(contextual_matches)})
-        self.send_json(200, {"source": source, "answer": answer, "session": session, "matches": contextual_matches})
+        context_matches = search_session_context(message, exclude_session_id=session["id"])
+        context_text = session_context_text(context_matches)
+        answer, session = send_agent_message(session, message, context_text)
+        update_session_index(session)
+        source = "openai-with-session-context" if context_matches else "openai"
+        append_log("info", "chat_answered_from_openai", {"sessionId": session["id"], "sessionContextCount": len(context_matches)})
+        self.send_json(200, {
+            "source": source,
+            "answer": answer,
+            "session": session,
+            "contextMatches": [
+                {
+                    "id": match.get("id"),
+                    "sessionId": match.get("sessionId"),
+                    "score": match.get("score"),
+                    "preview": match.get("preview"),
+                }
+                for match in context_matches
+            ],
+        })
 
     def serve_static(self, request_path: str):
         raw_path = "/index.html" if request_path == "/" else request_path

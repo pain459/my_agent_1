@@ -26,19 +26,16 @@ http://localhost:3000
 - Dynamic personas selected at session start.
 - Persistent chat sessions stored as JSON under `.agent/sessions/`.
 - Session gist/title metadata for easy identification.
-- Knowledge candidates are extracted into `.agent/knowledge-review.json`.
-- Approved knowledge is archived in `.agent/knowledge.json`.
-- Runtime local answers and approved OpenAI context are served directly from `.agent/knowledge.json`.
-- Rejected candidates move to `.agent/discard-bin.json` until discarded data is flushed.
-- Knowledge ingestion ledger stored at `.agent/knowledge-ingestion.json`; unchanged sessions are skipped unless force re-ingest is enabled.
-- Fine-tune preparation export writes approved knowledge to `.agent/exports/training.jsonl`.
+- Session context chunks are indexed into `.agent/session-index.json`.
+- Runtime responses always come from OpenAI, optionally with relevant prior session context.
+- Legacy knowledge files may still exist, but runtime and stats UI do not depend on them.
 - Guarded master clear commands can clear memory, chats, or all data with exact confirmation phrases.
-- Web UI includes chat, sessions, personas, ingestion, review queue, active knowledge, discard bin, training export, admin clear controls, logs, dark/light mode, progress indicator, chat rename, and chat deletion.
+- Web UI includes chat, sessions, personas, stats, session-context diagnostics, logs, dark/light mode, progress indicator, chat rename, and chat deletion.
 
 ## Important Files
 
 - `py_backend/server.py` serves the primary web UI and JSON API.
-- `py_backend/tools.py` provides maintenance helpers for training exports.
+- `py_backend/tools.py` provides maintenance helpers.
 - `public/index.html`, `public/app.js`, `public/styles.css` implement the chat UI.
 - `public/admin.html`, `public/admin.js` implement the admin UI.
 
@@ -70,9 +67,9 @@ kill <PID>
 ## Current Notes
 
 - Runtime data under `.agent/` is git-ignored because it can contain private conversations and memory.
-- Knowledge extraction requires an API key because it calls OpenAI.
+- Session context indexing is local and does not require an API key.
 - The current search approach is local keyword/Jaccard matching, not embeddings.
-- Knowledge review is intentionally conservative: only approved items can be exported, used for local answers, or sent as OpenAI context.
+- Runtime chat never answers directly from memory; it sends relevant session context to OpenAI when available.
 - The web UI is dependency-free and served by the local Python HTTP server.
 
 ## Likely Next Work
@@ -80,6 +77,6 @@ kill <PID>
 - Add first-class Python tests instead of only syntax checks and smoke commands.
 - Improve search quality with embeddings once local keyword search becomes too weak.
 - Add a richer chat transcript viewer with message timestamps and source badges.
-- Add export/import for sessions and approved knowledge.
+- Add export/import for sessions and session context diagnostics.
 - Add settings UI for model, port, and extraction model.
-- Add pagination for sessions, logs, and knowledge once data grows.
+- Add pagination for sessions and logs once data grows.
