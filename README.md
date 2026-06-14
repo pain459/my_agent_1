@@ -1,6 +1,6 @@
 # My Agent 1
 
-A local OpenAI-backed agent workspace with persistent sessions, reviewed knowledge, Q/A memory, and separate chat/admin web pages.
+A local OpenAI-backed agent workspace with persistent sessions, reviewed knowledge, active local knowledge search, and separate chat/admin web pages.
 
 ## Requirements
 
@@ -65,33 +65,20 @@ coach       Reflective Coach
 
 Every chat is saved as a local session under `.agent/sessions/`. Session files are ignored by git because they may contain private conversation data.
 
-## Q/A Cache
-
-Sessions remain the raw JSON memory. The Q/A cache is a derived index at `.agent/qa-index.json` that extracts user question and assistant answer pairs from all sessions.
-
-Build or rebuild it without starting chat:
-
-```bash
-npm run memory:build
-```
-
-During chat, exact repeated questions can be answered from this cache before making a new OpenAI API call. Similar questions are searchable from the admin page.
-
 ## Knowledge Pipeline
 
 Knowledge has a controlled lifecycle:
 
 ```text
-sessions -> review queue -> approved knowledge -> runtime memory -> local answers
+sessions -> review queue -> approved knowledge -> local answers or OpenAI context
 ```
 
 - `.agent/knowledge-review.json` stores extracted candidates waiting for approval or rejection.
-- `.agent/knowledge.json` stores approved knowledge, but approved items are not used at runtime until saved to memory.
-- `.agent/memory.json` stores runtime memory records searched before OpenAI calls.
+- `.agent/knowledge.json` stores approved knowledge that is active immediately after approval.
 - `.agent/discard-bin.json` stores rejected candidates until you flush discarded data.
 - `.agent/knowledge-ingestion.json` tracks which sessions were extracted and skips unchanged sessions unless force re-ingest is enabled.
 
-When runtime memory has a strong local match, the agent answers from memory and marks the response source as `memory`. If there is no strong memory match, the Q/A cache can answer exact repeats. Otherwise the agent calls OpenAI.
+When approved knowledge has a strong local match, the agent answers locally and marks the response source as `knowledge`. Medium-confidence matches are sent to OpenAI as approved context and marked as `openai-with-knowledge`. If there is no useful match, the agent calls OpenAI normally.
 
 ## Training Export
 
@@ -105,7 +92,7 @@ The export writes `.agent/exports/training.jsonl`. It uses approved knowledge on
 
 ## Deleting Memory
 
-Rejecting a review candidate moves it to the discard bin. Flushing discarded data permanently clears rejected candidates. Larger clear operations are guarded by confirmation phrases. `memory` clears `.agent/knowledge-review.json`, `.agent/knowledge.json`, `.agent/memory.json`, `.agent/discard-bin.json`, `.agent/knowledge-ingestion.json`, and `.agent/qa-index.json`. `chats` clears `.agent/sessions/`. `all` does both.
+Rejecting a review candidate moves it to the discard bin. Flushing discarded data permanently clears rejected candidates. Larger clear operations are guarded by confirmation phrases. `memory` clears `.agent/knowledge-review.json`, `.agent/knowledge.json`, `.agent/discard-bin.json`, `.agent/knowledge-ingestion.json`, and legacy `.agent/memory.json` / `.agent/qa-index.json` if present. `chats` clears `.agent/sessions/`. `all` does both.
 
 ## Project Structure
 

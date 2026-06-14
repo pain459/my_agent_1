@@ -7,7 +7,6 @@
   "scripts": {
     "start": "python3 py_backend/server.py",
     "web": "python3 py_backend/server.py",
-    "memory:build": "python3 -m py_backend.tools memory-build",
     "training:export": "python3 -m py_backend.tools training-export",
     "check": "python3 -m py_compile py_backend/server.py py_backend/tools.py && node --check public/app.js && node --check public/admin.js"
   },

@@ -1,6 +1,5 @@
 const els = {
   approvedList: document.querySelector("#approvedList"),
-  buildQaButton: document.querySelector("#buildQaButton"),
   clearConfirmation: document.querySelector("#clearConfirmation"),
   clearTarget: document.querySelector("#clearTarget"),
   discardList: document.querySelector("#discardList"),
@@ -9,21 +8,16 @@ const els = {
   flushDiscardButton: document.querySelector("#flushDiscardButton"),
   forceKnowledgeBuild: document.querySelector("#forceKnowledgeBuild"),
   ingestionList: document.querySelector("#ingestionList"),
+  knowledgeSearchButton: document.querySelector("#knowledgeSearchButton"),
+  knowledgeSearchInput: document.querySelector("#knowledgeSearchInput"),
   logList: document.querySelector("#logList"),
   masterClearButton: document.querySelector("#masterClearButton"),
   progressBar: document.querySelector("#progressBar"),
-  qaResults: document.querySelector("#qaResults"),
-  qaSearchButton: document.querySelector("#qaSearchButton"),
-  qaSearchInput: document.querySelector("#qaSearchInput"),
-  qaStatsButton: document.querySelector("#qaStatsButton"),
   refreshIngestionButton: document.querySelector("#refreshIngestionButton"),
+  refreshApprovedButton: document.querySelector("#refreshApprovedButton"),
   refreshLogsButton: document.querySelector("#refreshLogsButton"),
   refreshReviewButton: document.querySelector("#refreshReviewButton"),
   reviewList: document.querySelector("#reviewList"),
-  runtimeMemoryResults: document.querySelector("#runtimeMemoryResults"),
-  runtimeMemorySearchButton: document.querySelector("#runtimeMemorySearchButton"),
-  runtimeMemorySearchInput: document.querySelector("#runtimeMemorySearchInput"),
-  saveApprovedButton: document.querySelector("#saveApprovedButton"),
   themeToggle: document.querySelector("#themeToggle"),
   toast: document.querySelector("#toast"),
 };
@@ -33,14 +27,11 @@ setupTheme();
 await refreshAll();
 
 function bindEvents() {
-  els.buildQaButton.addEventListener("click", buildQa);
-  els.qaSearchButton.addEventListener("click", searchQa);
-  els.qaStatsButton.addEventListener("click", showQaStats);
   els.extractKnowledgeButton.addEventListener("click", extractKnowledge);
   els.refreshIngestionButton.addEventListener("click", refreshIngestion);
+  els.refreshApprovedButton.addEventListener("click", refreshApproved);
   els.refreshReviewButton.addEventListener("click", refreshReview);
-  els.saveApprovedButton.addEventListener("click", saveApprovedToMemory);
-  els.runtimeMemorySearchButton.addEventListener("click", searchRuntimeMemory);
+  els.knowledgeSearchButton.addEventListener("click", searchKnowledge);
   els.flushDiscardButton.addEventListener("click", flushDiscard);
   els.exportTrainingButton.addEventListener("click", exportTraining);
   els.masterClearButton.addEventListener("click", masterClear);
@@ -56,32 +47,6 @@ async function refreshAll() {
     refreshDiscard(),
     refreshLogs(),
   ]);
-}
-
-async function buildQa() {
-  await runBusy("Building Q/A cache...", async () => {
-    const data = await api("/api/qa/build", { method: "POST" });
-    toast(`Built Q/A index with ${data.recordCount} records.`);
-    await refreshLogs();
-  });
-}
-
-async function searchQa() {
-  const query = els.qaSearchInput.value.trim();
-  const data = await api(`/api/qa/search?q=${encodeURIComponent(query)}`);
-  els.qaResults.innerHTML = data.results.map(renderQaResult).join("") || empty("No prior answers found.");
-}
-
-async function showQaStats() {
-  const data = await api("/api/qa/stats");
-  const stats = data.stats;
-  els.qaResults.innerHTML = `
-    <div class="item">
-      <div class="item-title">${stats.recordCount} records</div>
-      <p class="muted">Updated ${escapeHtml(stats.updatedAt)}</p>
-      <p>${escapeHtml((stats.topKeywords || []).map((item) => `${item.keyword}(${item.count})`).join(", ") || "No keywords yet.")}</p>
-    </div>
-  `;
 }
 
 async function extractKnowledge() {
@@ -120,19 +85,10 @@ async function refreshApproved() {
   renderApproved(data.items);
 }
 
-async function saveApprovedToMemory() {
-  await runBusy("Saving to memory...", async () => {
-    const data = await api("/api/memory/save-approved", { method: "POST" });
-    toast(`Saved ${data.savedCount} approved items to runtime memory.`);
-    await Promise.all([refreshApproved(), refreshLogs()]);
-    await searchRuntimeMemory();
-  });
-}
-
-async function searchRuntimeMemory() {
-  const query = els.runtimeMemorySearchInput.value.trim();
-  const data = await api(`/api/memory/search?q=${encodeURIComponent(query)}`);
-  els.runtimeMemoryResults.innerHTML = data.results.map(renderMemoryResult).join("") || empty("No saved memory found.");
+async function searchKnowledge() {
+  const query = els.knowledgeSearchInput.value.trim();
+  const data = await api(`/api/knowledge/search?q=${encodeURIComponent(query)}`);
+  renderApproved(data.results);
 }
 
 async function refreshDiscard() {
@@ -164,8 +120,6 @@ async function masterClear() {
       body: { target, confirmation },
     });
     els.clearConfirmation.value = "";
-    els.qaResults.innerHTML = "";
-    els.runtimeMemoryResults.innerHTML = "";
     await refreshAll();
     toast(`Cleared ${target}.`);
   } catch (error) {
@@ -201,12 +155,12 @@ function renderReview(items) {
 function renderApproved(items) {
   els.approvedList.innerHTML = items.map((item) => `
     <div class="item">
-      <div class="item-title">${escapeHtml(item.type)} · ${item.savedToMemoryAt ? "saved" : "not saved"}</div>
+      <div class="item-title">${escapeHtml(item.type)}${item.score ? ` · ${Math.round(item.score * 100)}% match` : ""}</div>
       <p class="full-text">${escapeHtml(item.text)}</p>
       <p><strong>Source question:</strong> ${escapeHtml(item.sourceQuestion || "")}</p>
-      <p class="muted">${escapeHtml(item.id)} · approved ${escapeHtml(item.approvedAt || "")}${item.savedToMemoryAt ? ` · saved ${escapeHtml(item.savedToMemoryAt)}` : ""}</p>
+      <p class="muted">${escapeHtml(item.id)} · active since ${escapeHtml(item.approvedAt || "")}</p>
     </div>
-  `).join("") || empty("No approved knowledge yet.");
+  `).join("") || empty("No active knowledge yet.");
 }
 
 function renderDiscard(items) {
@@ -220,17 +174,6 @@ function renderDiscard(items) {
   `).join("") || empty("No rejected items waiting to flush.");
 }
 
-function renderMemoryResult(result) {
-  return `
-    <div class="item">
-      <div class="item-title">${Math.round(result.score * 100)}% match · ${escapeHtml(result.type || "memory")}</div>
-      <p><strong>Trigger:</strong> ${escapeHtml(result.question || "")}</p>
-      <p class="full-text"><strong>Local answer:</strong> ${escapeHtml(result.answer || "")}</p>
-      <p class="muted">${escapeHtml(result.id)} · knowledge ${escapeHtml(result.knowledgeId || "")}</p>
-    </div>
-  `;
-}
-
 function renderLogs(logs) {
   els.logList.innerHTML = logs.map((log) => `
     <div class="item log ${escapeHtml(log.level)}">
@@ -239,16 +182,6 @@ function renderLogs(logs) {
       <pre>${escapeHtml(JSON.stringify(log.details || log.raw || {}, null, 2))}</pre>
     </div>
   `).join("") || empty("No logs yet.");
-}
-
-function renderQaResult(result) {
-  return `
-    <div class="item">
-      <div class="item-title">${Math.round(result.score * 100)}% match</div>
-      <p><strong>Q:</strong> ${escapeHtml(result.question)}</p>
-      <p><strong>A:</strong> ${escapeHtml(result.answer)}</p>
-    </div>
-  `;
 }
 
 async function runBusy(label, task) {

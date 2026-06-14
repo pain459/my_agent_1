@@ -4,20 +4,14 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .server import build_qa_from_sessions, export_training_data
+from .server import export_training_data
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="My Agent backend tools")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("memory-build", help="Build the master Q/A index from sessions")
     subparsers.add_parser("training-export", help="Export approved knowledge as training JSONL")
     args = parser.parse_args()
-
-    if args.command == "memory-build":
-        database = build_qa_from_sessions()
-        print(f"Built master Q/A database with {database['recordCount']} records.")
-        return 0
 
     if args.command == "training-export":
         result = export_training_data()

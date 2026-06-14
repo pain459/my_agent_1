@@ -36,7 +36,8 @@ DEFAULT_AGENT_NAME = "My Agent"
 DEFAULT_PORT = 3000
 
 VALID_KNOWLEDGE_TYPES = {"fact", "preference", "decision", "procedure", "correction", "example"}
-MEMORY_LOCAL_ANSWER_THRESHOLD = 0.72
+KNOWLEDGE_LOCAL_ANSWER_THRESHOLD = 0.72
+KNOWLEDGE_CONTEXT_THRESHOLD = 0.30
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "how", "i", "in", "is", "it", "of", "on", "or", "our", "so", "the",
@@ -404,7 +405,7 @@ def extract_output_text(payload: dict) -> str:
 def known_memory_text(items: list[dict]) -> str:
     if not items:
         return ""
-    lines = ["Known memory from approved prior conversations:"]
+    lines = ["Approved knowledge from prior reviewed conversations:"]
     lines.extend([f"- [{item.get('type')}] {item.get('text')}" for item in items])
     return "\n".join(lines)
 
@@ -450,110 +451,8 @@ def record_exchange(session: dict, user_text: str, assistant_text: str, metadata
     return save_session(session)
 
 
-def qa_database(records: list[dict] | None = None) -> dict:
-    records = records or []
-    return {"version": 1, "updatedAt": now_iso(), "recordCount": len(records), "records": records}
-
-
-def load_qa() -> dict:
-    return read_json(QA_INDEX_PATH, qa_database)
-
-
-def save_qa(database: dict) -> dict:
-    database["updatedAt"] = now_iso()
-    database["recordCount"] = len(database.get("records", []))
-    write_json(QA_INDEX_PATH, database)
-    return database
-
-
-def create_qa_record(session: dict, pair_index: int, question: str, answer: str, created_at: str | None = None) -> dict:
-    normalized = normalize_text(question)
-    return {
-        "id": f"{session['id']}:{pair_index}",
-        "sessionId": session["id"],
-        "sessionGist": session.get("gist"),
-        "personaId": session.get("personaId"),
-        "personaName": session.get("personaName"),
-        "question": question,
-        "answer": answer,
-        "normalizedQuestion": normalized,
-        "keywords": keywords(normalized),
-        "createdAt": created_at or now_iso(),
-    }
-
-
-def extract_qa_records(session: dict) -> list[dict]:
-    messages = session.get("messages", [])
-    records = []
-    for index in range(len(messages) - 1):
-        current = messages[index]
-        following = messages[index + 1]
-        if current.get("role") == "user" and following.get("role") == "assistant":
-            records.append(create_qa_record(
-                session,
-                index,
-                current.get("content", ""),
-                following.get("content", ""),
-                following.get("createdAt") or session.get("updatedAt") or session.get("createdAt"),
-            ))
-    return records
-
-
-def build_qa_from_sessions() -> dict:
-    records = []
-    for session in list_sessions():
-        records.extend(extract_qa_records(session))
-    database = qa_database(records)
-    write_json(QA_INDEX_PATH, database)
-    return database
-
-
-def add_qa_exchange(session: dict, question: str, answer: str) -> dict:
-    database = load_qa()
-    record = create_qa_record(session, max(0, len(session.get("messages", [])) - 2), question, answer)
-    records = [item for item in database.get("records", []) if item.get("id") != record["id"]]
-    records.append(record)
-    database["records"] = sorted(records, key=lambda item: item.get("createdAt", ""), reverse=True)
-    return save_qa(database)
-
-
-def search_qa(question: str, limit: int = 5) -> list[dict]:
-    database = load_qa()
-    normalized = normalize_text(question)
-    query_keywords = keywords(normalized)
-    results = []
-    for record in database.get("records", []):
-        if record.get("normalizedQuestion") == normalized:
-            score = 1.0
-        else:
-            score = jaccard(record.get("keywords", []), query_keywords)
-        if score > 0:
-            results.append({**record, "score": score})
-    return sorted(results, key=lambda item: item["score"], reverse=True)[:limit]
-
-
-def qa_stats() -> dict:
-    database = load_qa()
-    counts = {}
-    keyword_counts = {}
-    for record in database.get("records", []):
-        normalized = record.get("normalizedQuestion", "")
-        counts.setdefault(normalized, {"count": 0, "question": record.get("question", "")})
-        counts[normalized]["count"] += 1
-        for keyword in record.get("keywords", []):
-            keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
-    repeated = sorted([item for item in counts.values() if item["count"] > 1], key=lambda item: item["count"], reverse=True)[:10]
-    top_keywords = [{"keyword": key, "count": value} for key, value in sorted(keyword_counts.items(), key=lambda item: item[1], reverse=True)[:15]]
-    return {
-        "updatedAt": database.get("updatedAt"),
-        "recordCount": len(database.get("records", [])),
-        "repeatedQuestions": repeated,
-        "topKeywords": top_keywords,
-    }
-
-
 def clear_qa() -> dict:
-    database = qa_database([])
+    database = {"version": 1, "updatedAt": now_iso(), "recordCount": 0, "records": []}
     write_json(QA_INDEX_PATH, database)
     return database
 
@@ -586,20 +485,144 @@ def save_knowledge(database: dict) -> dict:
     return save_collection(KNOWLEDGE_PATH, database)
 
 
-def load_memory() -> dict:
-    return read_json(MEMORY_PATH, lambda: collection_database([], "records"))
-
-
-def save_memory(database: dict) -> dict:
-    return save_collection(MEMORY_PATH, database, "records")
-
-
 def load_discard_bin() -> dict:
     return read_json(DISCARD_BIN_PATH, lambda: collection_database())
 
 
 def save_discard_bin(database: dict) -> dict:
     return save_collection(DISCARD_BIN_PATH, database)
+
+
+def normalize_knowledge_shape(item: dict, status_timestamp_key: str | None = None) -> dict:
+    timestamp = now_iso()
+    source_session_id = str(item.get("sourceSessionId", ""))
+    source_message_ids = [str(value) for value in item.get("sourceMessageIds", []) if value is not None]
+    source_question = str(item.get("sourceQuestion", "")).strip()
+    source_answer = str(item.get("sourceAnswer", "")).strip()
+    session = get_session(source_session_id) if source_session_id else None
+    if session and (not source_question or not source_answer):
+        source_context = source_context_for(session, source_message_ids)
+        source_question = source_question or source_context["sourceQuestion"]
+        source_answer = source_answer or source_context["sourceAnswer"]
+    text = str(item.get("text", "")).strip()
+    fingerprint = item.get("fingerprint") or knowledge_fingerprint(source_session_id, source_question, source_answer, text)
+    normalized = {
+        **item,
+        "type": item.get("type") if item.get("type") in VALID_KNOWLEDGE_TYPES else "fact",
+        "text": text,
+        "sourceSessionId": source_session_id,
+        "sourceQuestion": source_question,
+        "sourceAnswer": source_answer,
+        "sourceMessageIds": source_message_ids,
+        "confidence": clamp_confidence(item.get("confidence", 0.5)),
+        "fingerprint": fingerprint,
+        "keywords": keywords(f"{text} {source_question}"),
+        "updatedAt": timestamp,
+    }
+    normalized.pop("status", None)
+    normalized.setdefault("createdAt", item.get("createdAt") or timestamp)
+    if status_timestamp_key:
+        normalized.setdefault(status_timestamp_key, timestamp)
+    return normalized
+
+
+def migrate_legacy_knowledge_store() -> None:
+    database = read_json(KNOWLEDGE_PATH, lambda: collection_database())
+    items = database.get("items", [])
+    legacy_items = [item for item in items if isinstance(item, dict) and item.get("status")]
+    if not legacy_items:
+        return
+
+    review_database = load_review()
+    discard_database = load_discard_bin()
+    approved_items = [normalize_knowledge_shape(item) for item in items if isinstance(item, dict) and not item.get("status")]
+    review_existing = {item.get("fingerprint") for item in review_database.get("items", [])}
+    discard_existing = {item.get("fingerprint") for item in discard_database.get("items", [])}
+    approved_existing = {item.get("fingerprint") for item in approved_items}
+    moved = {"pending": 0, "approved": 0, "rejected": 0}
+
+    for item in legacy_items:
+        status = item.get("status")
+        if status == "pending":
+            migrated = normalize_knowledge_shape(item)
+            if migrated.get("fingerprint") not in review_existing:
+                review_database.setdefault("items", []).append(migrated)
+                review_existing.add(migrated.get("fingerprint"))
+                moved["pending"] += 1
+        elif status == "rejected":
+            migrated = normalize_knowledge_shape(item, "rejectedAt")
+            if migrated.get("fingerprint") not in discard_existing:
+                discard_database.setdefault("items", []).append(migrated)
+                discard_existing.add(migrated.get("fingerprint"))
+                moved["rejected"] += 1
+        else:
+            migrated = normalize_knowledge_shape(item, "approvedAt")
+            if migrated.get("fingerprint") not in approved_existing:
+                approved_items.append(migrated)
+                approved_existing.add(migrated.get("fingerprint"))
+                moved["approved"] += 1
+
+    save_review(review_database)
+    save_discard_bin(discard_database)
+    save_knowledge(collection_database(approved_items))
+    append_log("info", "legacy_knowledge_migrated", moved)
+
+
+def migrate_legacy_memory_store() -> None:
+    database = read_json(MEMORY_PATH, lambda: collection_database([], "records"))
+    records = [record for record in database.get("records", []) if isinstance(record, dict)]
+    if not records:
+        return
+
+    knowledge_database = load_knowledge()
+    existing = {item.get("fingerprint") for item in knowledge_database.get("items", [])}
+    migrated_count = 0
+    timestamp = now_iso()
+    for record in records:
+        text = str(record.get("answer") or record.get("text") or "").strip()
+        if not text:
+            continue
+        source_question = str(record.get("question") or record.get("sourceQuestion") or "").strip()
+        source_answer = str(record.get("sourceAnswer") or "").strip()
+        source_session_id = str(record.get("sourceSessionId") or "")
+        fingerprint = record.get("fingerprint") or knowledge_fingerprint(source_session_id, source_question, source_answer, text)
+        if fingerprint in existing:
+            continue
+        item = {
+            "id": record.get("knowledgeId") or f"kn-legacy-{compact_timestamp(timestamp)}-{random_suffix()}",
+            "type": record.get("type") if record.get("type") in VALID_KNOWLEDGE_TYPES else "fact",
+            "text": text,
+            "sourceSessionId": source_session_id,
+            "sourceQuestion": source_question,
+            "sourceAnswer": source_answer,
+            "sourceMessageIds": [str(value) for value in record.get("sourceMessageIds", []) if value is not None],
+            "personaId": record.get("personaId"),
+            "confidence": clamp_confidence(record.get("confidence", 0.5)),
+            "fingerprint": fingerprint,
+            "keywords": keywords(f"{text} {source_question} {source_answer}"),
+            "createdAt": record.get("createdAt") or timestamp,
+            "approvedAt": record.get("createdAt") or timestamp,
+            "updatedAt": timestamp,
+        }
+        knowledge_database.setdefault("items", []).append(item)
+        existing.add(fingerprint)
+        migrated_count += 1
+    if migrated_count:
+        save_knowledge(knowledge_database)
+        append_log("info", "legacy_memory_migrated_to_knowledge", {"itemCount": migrated_count})
+
+
+def remove_legacy_memory_fields() -> None:
+    database = load_knowledge()
+    changed = False
+    for item in database.get("items", []):
+        if "savedToMemoryAt" in item or "memoryId" in item:
+            item.pop("savedToMemoryAt", None)
+            item.pop("memoryId", None)
+            item["updatedAt"] = now_iso()
+            changed = True
+    if changed:
+        save_knowledge(database)
 
 
 def clamp_confidence(value) -> float:
@@ -679,8 +702,8 @@ def create_review_candidate(candidate: dict, session: dict) -> dict:
 
 def all_knowledge_fingerprints() -> set[str]:
     fingerprints = set()
-    for database in (load_review(), load_knowledge(), load_memory(), load_discard_bin()):
-        for item in database.get("items", []) + database.get("records", []):
+    for database in (load_review(), load_knowledge(), load_discard_bin()):
+        for item in database.get("items", []):
             fingerprint = item.get("fingerprint")
             if fingerprint:
                 fingerprints.add(fingerprint)
@@ -688,6 +711,7 @@ def all_knowledge_fingerprints() -> set[str]:
 
 
 def add_review_candidates(candidates: list[dict], session: dict) -> list[dict]:
+    migrate_legacy_knowledge_store()
     database = load_review()
     existing = all_knowledge_fingerprints()
     added = []
@@ -703,14 +727,19 @@ def add_review_candidates(candidates: list[dict], session: dict) -> list[dict]:
 
 
 def list_review_candidates() -> list[dict]:
+    migrate_legacy_knowledge_store()
     return sorted(load_review().get("items", []), key=lambda item: item.get("createdAt", ""), reverse=True)
 
 
 def list_approved_knowledge() -> list[dict]:
+    migrate_legacy_knowledge_store()
+    migrate_legacy_memory_store()
+    remove_legacy_memory_fields()
     return sorted(load_knowledge().get("items", []), key=lambda item: item.get("approvedAt", item.get("updatedAt", "")), reverse=True)
 
 
 def list_discarded() -> list[dict]:
+    migrate_legacy_knowledge_store()
     return sorted(load_discard_bin().get("items", []), key=lambda item: item.get("rejectedAt", item.get("updatedAt", "")), reverse=True)
 
 
@@ -726,6 +755,7 @@ def pop_review_candidate(item_id: str) -> dict | None:
 
 
 def approve_review_candidate(item_id: str) -> dict | None:
+    migrate_legacy_knowledge_store()
     item = pop_review_candidate(item_id)
     if not item:
         return None
@@ -740,6 +770,7 @@ def approve_review_candidate(item_id: str) -> dict | None:
 
 
 def reject_review_candidate(item_id: str) -> dict | None:
+    migrate_legacy_knowledge_store()
     item = pop_review_candidate(item_id)
     if not item:
         return None
@@ -759,52 +790,22 @@ def flush_discard_bin() -> dict:
     return database
 
 
-def memory_record_from_knowledge(item: dict) -> dict:
-    timestamp = now_iso()
-    return {
-        "id": f"mem-{compact_timestamp(timestamp)}-{random_suffix()}",
-        "knowledgeId": item.get("id"),
-        "type": item.get("type"),
-        "question": item.get("sourceQuestion", ""),
-        "answer": item.get("text", ""),
-        "sourceAnswer": item.get("sourceAnswer", ""),
-        "sourceSessionId": item.get("sourceSessionId"),
-        "sourceMessageIds": item.get("sourceMessageIds", []),
-        "personaId": item.get("personaId"),
-        "confidence": item.get("confidence", 0.5),
-        "fingerprint": item.get("fingerprint"),
-        "keywords": keywords(f"{item.get('sourceQuestion', '')} {item.get('text', '')}"),
-        "createdAt": timestamp,
-        "updatedAt": timestamp,
-    }
+def knowledge_search_text(item: dict) -> str:
+    return " ".join([
+        str(item.get("text", "")),
+        str(item.get("sourceQuestion", "")),
+        str(item.get("sourceAnswer", "")),
+        str(item.get("type", "")),
+    ])
 
 
-def save_approved_to_memory() -> dict:
-    knowledge_database = load_knowledge()
-    memory_database = load_memory()
-    records = memory_database.setdefault("records", [])
-    existing_knowledge_ids = {record.get("knowledgeId") for record in records}
-    saved = []
-    timestamp = now_iso()
-    for item in knowledge_database.get("items", []):
-        if item.get("id") in existing_knowledge_ids:
-            continue
-        record = memory_record_from_knowledge(item)
-        records.append(record)
-        item["savedToMemoryAt"] = timestamp
-        item["memoryId"] = record["id"]
-        item["updatedAt"] = timestamp
-        existing_knowledge_ids.add(item.get("id"))
-        saved.append(record)
-    save_memory(memory_database)
-    save_knowledge(knowledge_database)
-    return {"savedCount": len(saved), "records": saved}
-
-
-def search_memory(query: str, limit: int = 5) -> list[dict]:
+def search_approved_knowledge(query: str, limit: int = 5) -> list[dict]:
+    migrate_legacy_knowledge_store()
+    migrate_legacy_memory_store()
+    remove_legacy_memory_fields()
     normalized = normalize_text(query)
     query_keywords = keywords(query)
-    records = load_memory().get("records", [])
+    records = load_knowledge().get("items", [])
     if not normalized and not query_keywords:
         return sorted(
             [{**record, "score": 1.0} for record in records],
@@ -813,16 +814,14 @@ def search_memory(query: str, limit: int = 5) -> list[dict]:
         )[:limit]
     results = []
     for record in records:
-        normalized_question = normalize_text(record.get("question", ""))
-        normalized_answer = normalize_text(record.get("answer", ""))
-        if normalized and (normalized == normalized_question or normalized in normalized_question):
+        search_text = knowledge_search_text(record)
+        normalized_search_text = normalize_text(search_text)
+        if normalized and normalized in normalized_search_text:
             score = 1.0
-        elif normalized and normalized in normalized_answer:
-            score = 0.9
         else:
             score = max(
                 jaccard(record.get("keywords", []), query_keywords),
-                jaccard(keywords(record.get("answer", "")), query_keywords),
+                jaccard(keywords(search_text), query_keywords),
             )
         if score > 0:
             results.append({**record, "score": score})
@@ -842,7 +841,7 @@ def clear_knowledge() -> dict:
 
 
 def clear_memory() -> dict:
-    database = collection_database([], "records")
+    database = {"version": 1, "updatedAt": now_iso(), "itemCount": 0, "records": []}
     write_json(MEMORY_PATH, database)
     return database
 
@@ -1081,25 +1080,6 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             append_log("info", "session_cleared", {"sessionId": session["id"]})
             self.send_json(200, {"session": session})
             return
-        if route in {"POST /api/memory/build", "POST /api/qa/build"}:
-            database = build_qa_from_sessions()
-            append_log("info", "qa_index_built", {"recordCount": database["recordCount"]})
-            self.send_json(200, {"recordCount": database["recordCount"]})
-            return
-        if route == "GET /api/qa/search":
-            self.send_json(200, {"results": search_qa(query.get("q", [""])[0])})
-            return
-        if route in {"GET /api/memory/stats", "GET /api/qa/stats"}:
-            self.send_json(200, {"stats": qa_stats()})
-            return
-        if route == "GET /api/memory/search":
-            self.send_json(200, {"results": search_memory(query.get("q", [""])[0])})
-            return
-        if route == "POST /api/memory/save-approved":
-            result = save_approved_to_memory()
-            append_log("info", "approved_saved_to_memory", {"savedCount": result["savedCount"]})
-            self.send_json(200, result)
-            return
         if route in {"POST /api/knowledge/build", "POST /api/knowledge/extract"}:
             body = self.read_json_body()
             result = build_knowledge(body.get("sessionId"), force=bool(body.get("force")))
@@ -1115,6 +1095,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             return
         if route == "GET /api/knowledge/approved":
             self.send_json(200, {"items": list_approved_knowledge()})
+            return
+        if route == "GET /api/knowledge/search":
+            self.send_json(200, {"results": search_approved_knowledge(query.get("q", [""])[0])})
             return
         review_match = re.match(r"^/api/knowledge/review/([^/]+)/(approve|reject)$", parsed.path)
         if self.command == "POST" and review_match:
@@ -1155,23 +1138,19 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         message = str(body.get("message", "")).strip()
         if not message:
             raise HttpError(400, "Message is required.")
-        runtime_memory_matches = search_memory(message, limit=1)
-        if runtime_memory_matches and runtime_memory_matches[0].get("score", 0) >= MEMORY_LOCAL_ANSWER_THRESHOLD:
-            match = runtime_memory_matches[0]
-            session = record_exchange(session, message, match["answer"], {"source": "memory", "memoryId": match["id"], "score": match["score"]})
-            append_log("info", "chat_answered_from_runtime_memory", {"sessionId": session["id"], "memoryId": match["id"], "score": match["score"]})
-            self.send_json(200, {"source": "memory", "answer": match["answer"], "session": session, "match": match})
+        knowledge_matches = search_approved_knowledge(message, limit=5)
+        strongest_match = knowledge_matches[0] if knowledge_matches else None
+        if strongest_match and strongest_match.get("score", 0) >= KNOWLEDGE_LOCAL_ANSWER_THRESHOLD:
+            session = record_exchange(session, message, strongest_match["text"], {"source": "knowledge", "knowledgeId": strongest_match["id"], "score": strongest_match["score"]})
+            append_log("info", "chat_answered_from_knowledge", {"sessionId": session["id"], "knowledgeId": strongest_match["id"], "score": strongest_match["score"]})
+            self.send_json(200, {"source": "knowledge", "answer": strongest_match["text"], "session": session, "match": strongest_match})
             return
-        qa_matches = search_qa(message, limit=1)
-        if qa_matches and qa_matches[0].get("score") == 1:
-            session = record_exchange(session, message, qa_matches[0]["answer"], {"source": "qa-memory", "qaRecordId": qa_matches[0]["id"]})
-            append_log("info", "chat_answered_from_qa_memory", {"sessionId": session["id"], "qaRecordId": qa_matches[0]["id"]})
-            self.send_json(200, {"source": "qa-memory", "answer": qa_matches[0]["answer"], "session": session})
-            return
-        answer, session = send_agent_message(session, message)
-        add_qa_exchange(session, message, answer)
-        append_log("info", "chat_answered_from_openai", {"sessionId": session["id"]})
-        self.send_json(200, {"source": "openai", "answer": answer, "session": session})
+        contextual_matches = [item for item in knowledge_matches if item.get("score", 0) >= KNOWLEDGE_CONTEXT_THRESHOLD]
+        known_knowledge = known_memory_text(contextual_matches)
+        answer, session = send_agent_message(session, message, known_knowledge)
+        source = "openai-with-knowledge" if contextual_matches else "openai"
+        append_log("info", "chat_answered_from_openai", {"sessionId": session["id"], "knowledgeContextCount": len(contextual_matches)})
+        self.send_json(200, {"source": source, "answer": answer, "session": session, "matches": contextual_matches})
 
     def serve_static(self, request_path: str):
         raw_path = "/index.html" if request_path == "/" else request_path

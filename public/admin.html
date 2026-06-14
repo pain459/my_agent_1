@@ -21,19 +21,6 @@
 
       <main class="admin-grid">
         <section class="panel">
-          <h2>Q/A Cache</h2>
-          <div class="button-row">
-            <button id="buildQaButton" type="button">Build Q/A Index</button>
-            <button id="qaStatsButton" type="button">Stats</button>
-          </div>
-          <div class="search-row">
-            <input id="qaSearchInput" type="search" placeholder="Search prior exact answers">
-            <button id="qaSearchButton" type="button">Search</button>
-          </div>
-          <div id="qaResults" class="results tall"></div>
-        </section>
-
-        <section class="panel">
           <h2>Ingestion</h2>
           <div class="button-row">
             <button id="extractKnowledgeButton" type="button">Extract New/Changed</button>
@@ -56,19 +43,14 @@
 
         <section class="panel">
           <div class="panel-header">
-            <h2>Approved Knowledge</h2>
-            <button id="saveApprovedButton" type="button">Save to Memory</button>
+            <h2>Active Knowledge</h2>
+            <button id="refreshApprovedButton" type="button">Refresh</button>
+          </div>
+          <div class="search-row">
+            <input id="knowledgeSearchInput" type="search" placeholder="Search active knowledge">
+            <button id="knowledgeSearchButton" type="button">Search</button>
           </div>
           <div id="approvedList" class="results tall"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Runtime Memory</h2>
-          <div class="search-row">
-            <input id="runtimeMemorySearchInput" type="search" placeholder="Search saved memory">
-            <button id="runtimeMemorySearchButton" type="button">Search</button>
-          </div>
-          <div id="runtimeMemoryResults" class="results tall"></div>
         </section>
 
         <section class="panel">
