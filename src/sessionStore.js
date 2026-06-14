@@ -40,6 +40,28 @@ export class SessionStore {
     return JSON.parse(await readFile(path, "utf8"));
   }
 
+  async renameSession(id, title) {
+    const session = await this.getSession(id);
+
+    if (!session) {
+      return null;
+    }
+
+    session.title = String(title || "").trim();
+    return this.saveSession(session);
+  }
+
+  async deleteSession(id) {
+    const session = await this.getSession(id);
+
+    if (!session) {
+      return null;
+    }
+
+    await rm(this.getSessionPath(id), { force: true });
+    return session;
+  }
+
   async listSessions() {
     await this.ensureDirectory();
 

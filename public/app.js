@@ -15,6 +15,7 @@ const els = {
   knowledgeSearchButton: document.querySelector("#knowledgeSearchButton"),
   knowledgeSearchInput: document.querySelector("#knowledgeSearchInput"),
   knowledgeStatus: document.querySelector("#knowledgeStatus"),
+  logList: document.querySelector("#logList"),
   masterClearButton: document.querySelector("#masterClearButton"),
   memoryResults: document.querySelector("#memoryResults"),
   memorySearchButton: document.querySelector("#memorySearchButton"),
@@ -25,12 +26,17 @@ const els = {
   newSessionButton: document.querySelector("#newSessionButton"),
   personaSelect: document.querySelector("#personaSelect"),
   personaText: document.querySelector("#personaText"),
+  progressBar: document.querySelector("#progressBar"),
+  refreshLogsButton: document.querySelector("#refreshLogsButton"),
   refreshKnowledgeButton: document.querySelector("#refreshKnowledgeButton"),
   refreshSessionsButton: document.querySelector("#refreshSessionsButton"),
+  renameSessionButton: document.querySelector("#renameSessionButton"),
+  deleteSessionButton: document.querySelector("#deleteSessionButton"),
   sessionList: document.querySelector("#sessionList"),
   sessionMeta: document.querySelector("#sessionMeta"),
   sessionTitle: document.querySelector("#sessionTitle"),
   toast: document.querySelector("#toast"),
+  themeToggle: document.querySelector("#themeToggle"),
 };
 
 await init();
@@ -45,15 +51,19 @@ async function init() {
   }
 
   await refreshKnowledge();
+  await refreshLogs();
 }
 
 function bindEvents() {
+  setupTheme();
   els.newSessionButton.addEventListener("click", () => createSession());
   els.refreshSessionsButton.addEventListener("click", () => refreshSessions());
   els.refreshKnowledgeButton.addEventListener("click", () => refreshKnowledge());
   els.knowledgeStatus.addEventListener("change", () => refreshKnowledge());
   els.chatForm.addEventListener("submit", sendMessage);
   els.clearSessionButton.addEventListener("click", clearCurrentSession);
+  els.renameSessionButton.addEventListener("click", renameCurrentSession);
+  els.deleteSessionButton.addEventListener("click", deleteCurrentSession);
   els.buildMemoryButton.addEventListener("click", buildMemory);
   els.memorySearchButton.addEventListener("click", searchMemory);
   els.memoryStatsButton.addEventListener("click", showMemoryStats);
@@ -61,6 +71,8 @@ function bindEvents() {
   els.knowledgeSearchButton.addEventListener("click", searchKnowledge);
   els.exportTrainingButton.addEventListener("click", exportTraining);
   els.masterClearButton.addEventListener("click", masterClear);
+  els.refreshLogsButton.addEventListener("click", refreshLogs);
+  els.themeToggle.addEventListener("click", toggleTheme);
 }
 
 async function loadPersonas() {
@@ -116,6 +128,7 @@ async function sendMessage(event) {
 
   els.messageInput.value = "";
   appendMessage("user", message);
+  setBusy(true, "Thinking...");
 
   try {
     const data = await api("/api/chat", {
@@ -131,6 +144,8 @@ async function sendMessage(event) {
     await refreshSessions();
   } catch (error) {
     toast(error.message);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -147,9 +162,60 @@ async function clearCurrentSession() {
   await refreshSessions();
 }
 
+async function renameCurrentSession() {
+  if (!state.currentSession) {
+    return;
+  }
+
+  const currentTitle = state.currentSession.title || state.currentSession.gist || "";
+  const title = prompt("Rename chat", currentTitle);
+
+  if (title === null) {
+    return;
+  }
+
+  const data = await api(`/api/sessions/${encodeURIComponent(state.currentSession.id)}/rename`, {
+    method: "POST",
+    body: { title },
+  });
+  state.currentSession = data.session;
+  renderCurrentSession();
+  await refreshSessions();
+}
+
+async function deleteCurrentSession() {
+  if (!state.currentSession) {
+    return;
+  }
+
+  const confirmed = confirm(`Delete chat "${state.currentSession.title || state.currentSession.gist}" entirely?`);
+
+  if (!confirmed) {
+    return;
+  }
+
+  await api(`/api/sessions/${encodeURIComponent(state.currentSession.id)}`, {
+    method: "DELETE",
+  });
+  state.currentSession = null;
+  await refreshSessions();
+
+  if (!state.currentSession) {
+    await createSession();
+  }
+}
+
 async function buildMemory() {
-  const data = await api("/api/memory/build", { method: "POST" });
-  toast(`Built Q/A index with ${data.recordCount} records.`);
+  setBusy(true, "Building Q/A memory...");
+  try {
+    const data = await api("/api/memory/build", { method: "POST" });
+    toast(`Built Q/A index with ${data.recordCount} records.`);
+    await refreshLogs();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function searchMemory() {
@@ -171,12 +237,20 @@ async function showMemoryStats() {
 }
 
 async function buildKnowledge() {
-  const data = await api("/api/knowledge/build", {
-    method: "POST",
-    body: { sessionId: state.currentSession?.id },
-  });
-  toast(`Extracted ${data.extractedCount}; added ${data.addedCount} pending items.`);
-  await refreshKnowledge();
+  setBusy(true, "Extracting knowledge...");
+  try {
+    const data = await api("/api/knowledge/build", {
+      method: "POST",
+      body: { sessionId: state.currentSession?.id },
+    });
+    toast(`Extracted ${data.extractedCount}; added ${data.addedCount} pending items.`);
+    await refreshKnowledge();
+    await refreshLogs();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function refreshKnowledge() {
@@ -194,11 +268,13 @@ async function searchKnowledge() {
 async function updateKnowledge(id, action) {
   await api(`/api/knowledge/${encodeURIComponent(id)}/${action}`, { method: "POST" });
   await refreshKnowledge();
+  await refreshLogs();
 }
 
 async function exportTraining() {
   const data = await api("/api/training/export", { method: "POST" });
   toast(`Exported ${data.recordCount} records.`);
+  await refreshLogs();
 }
 
 async function masterClear() {
@@ -219,6 +295,7 @@ async function masterClear() {
     }
 
     await refreshKnowledge();
+    await refreshLogs();
     els.memoryResults.innerHTML = "";
     toast(`Cleared ${target}.`);
   } catch (error) {
@@ -226,10 +303,15 @@ async function masterClear() {
   }
 }
 
+async function refreshLogs() {
+  const data = await api("/api/logs?limit=80");
+  renderLogs(data.logs);
+}
+
 function renderSessions(sessions) {
   els.sessionList.innerHTML = sessions.map((session) => `
     <button class="item ${state.currentSession?.id === session.id ? "active" : ""}" type="button" data-session-id="${escapeHtml(session.id)}">
-      <span class="item-title">${escapeHtml(session.gist)}</span>
+      <span class="item-title">${escapeHtml(session.title || session.gist)}</span>
       <span class="muted">${escapeHtml(session.personaName || "Persona")} · ${session.messages?.length || 0} messages</span>
     </button>
   `).join("") || empty("No sessions yet.");
@@ -249,7 +331,7 @@ function renderCurrentSession() {
     return;
   }
 
-  els.sessionTitle.textContent = session.gist;
+  els.sessionTitle.textContent = session.title || session.gist;
   els.sessionMeta.textContent = `${session.personaName || "Persona"} · ${session.id}`;
   els.messages.innerHTML = "";
   for (const message of session.messages || []) {
@@ -268,12 +350,12 @@ function appendMessage(role, content, source) {
 function renderKnowledgeItems(items) {
   els.knowledgeList.innerHTML = items.map((item) => `
     <div class="item">
-      <div class="item-title">${escapeHtml(item.type)} · ${escapeHtml(item.status)}</div>
-      <p>${escapeHtml(item.text)}</p>
-      <p class="muted">${escapeHtml(item.id)} · confidence ${escapeHtml(String(item.confidence ?? ""))}</p>
+      <div class="item-title">${escapeHtml(item.type)} · ${escapeHtml(item.status)}${item.score ? ` · ${Math.round(item.score * 100)}% match` : ""}</div>
+      <p class="full-text">${escapeHtml(item.text)}</p>
+      <p class="muted">${escapeHtml(item.id)} · confidence ${escapeHtml(String(item.confidence ?? ""))} · source ${escapeHtml(item.sourceSessionId || "unknown")}</p>
       <div class="item-actions">
-        <button type="button" data-knowledge-action="approve" data-knowledge-id="${escapeHtml(item.id)}">Approve</button>
-        <button type="button" data-knowledge-action="reject" data-knowledge-id="${escapeHtml(item.id)}">Reject</button>
+        ${item.status === "pending" ? `<button type="button" data-knowledge-action="approve" data-knowledge-id="${escapeHtml(item.id)}">Approve</button>` : ""}
+        ${item.status === "pending" ? `<button type="button" data-knowledge-action="reject" data-knowledge-id="${escapeHtml(item.id)}">Reject</button>` : ""}
         <button type="button" data-knowledge-action="delete" data-knowledge-id="${escapeHtml(item.id)}">Delete</button>
       </div>
     </div>
@@ -282,6 +364,16 @@ function renderKnowledgeItems(items) {
   els.knowledgeList.querySelectorAll("[data-knowledge-action]").forEach((button) => {
     button.addEventListener("click", () => updateKnowledge(button.dataset.knowledgeId, button.dataset.knowledgeAction));
   });
+}
+
+function renderLogs(logs) {
+  els.logList.innerHTML = logs.map((log) => `
+    <div class="item log ${escapeHtml(log.level)}">
+      <div class="item-title">${escapeHtml(log.event)} · ${escapeHtml(log.level)}</div>
+      <p class="muted">${escapeHtml(log.timestamp || "")}</p>
+      <pre>${escapeHtml(JSON.stringify(log.details || log.raw || {}, null, 2))}</pre>
+    </div>
+  `).join("") || empty("No logs yet.");
 }
 
 function renderQaResult(result) {
@@ -318,6 +410,30 @@ function toast(message) {
   els.toast.textContent = message;
   els.toast.classList.add("visible");
   setTimeout(() => els.toast.classList.remove("visible"), 3200);
+}
+
+function setBusy(isBusy, label = "Working...") {
+  document.body.classList.toggle("busy", isBusy);
+  els.progressBar.setAttribute("aria-hidden", String(!isBusy));
+  els.messageInput.disabled = isBusy;
+  els.chatForm.querySelector("button").disabled = isBusy;
+  els.chatForm.querySelector("button").textContent = isBusy ? label : "Send";
+}
+
+function setupTheme() {
+  const theme = localStorage.getItem("agent-theme") || "light";
+  applyTheme(theme);
+}
+
+function toggleTheme() {
+  const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("agent-theme", nextTheme);
+  applyTheme(nextTheme);
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  els.themeToggle.textContent = theme === "dark" ? "Dark" : "Light";
 }
 
 function empty(message) {

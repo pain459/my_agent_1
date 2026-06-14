@@ -10,8 +10,11 @@
     <div class="app-shell">
       <aside class="sidebar">
         <header class="brand">
-          <h1>My Agent 1</h1>
-          <p>Local agent workspace</p>
+          <div>
+            <h1>My Agent 1</h1>
+            <p>Local agent workspace</p>
+          </div>
+          <button id="themeToggle" class="icon-button" type="button" title="Toggle theme">Light</button>
         </header>
 
         <section class="panel">
@@ -38,9 +41,14 @@
             <h2 id="sessionTitle">No session selected</h2>
             <p id="sessionMeta" class="muted"></p>
           </div>
-          <button id="clearSessionButton" type="button">Clear Chat</button>
+          <div class="button-row">
+            <button id="renameSessionButton" type="button">Rename</button>
+            <button id="deleteSessionButton" type="button">Delete</button>
+            <button id="clearSessionButton" type="button">Clear Chat</button>
+          </div>
         </header>
 
+        <div id="progressBar" class="progress" aria-hidden="true"><span></span></div>
         <section id="messages" class="messages"></section>
 
         <form id="chatForm" class="composer">
@@ -78,6 +86,14 @@
             <button id="knowledgeSearchButton" type="button">Search</button>
           </div>
           <div id="knowledgeList" class="results tall"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Logs</h2>
+            <button id="refreshLogsButton" type="button">Refresh</button>
+          </div>
+          <div id="logList" class="results logs"></div>
         </section>
 
         <section class="panel danger">

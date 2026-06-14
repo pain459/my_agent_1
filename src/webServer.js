@@ -5,6 +5,7 @@ import { Agent } from "./agent.js";
 import { getConfig } from "./config.js";
 import { extractKnowledgeFromSession } from "./knowledgeExtractor.js";
 import { formatKnownMemory, KnowledgeStore } from "./knowledgeStore.js";
+import { Logger } from "./logger.js";
 import { OpenAIClient } from "./openaiClient.js";
 import { getPersona, listPersonas } from "./personas.js";
 import { QaStore } from "./qaStore.js";
@@ -23,6 +24,7 @@ const MIME_TYPES = {
 const config = getConfig();
 const sessionStore = new SessionStore();
 const knowledgeStore = new KnowledgeStore();
+const logger = new Logger();
 const qaStore = new QaStore();
 const client = new OpenAIClient({
   apiKey: config.apiKey,
@@ -44,6 +46,11 @@ createServer(async (request, response) => {
     await serveStatic(request, response);
   } catch (error) {
     const status = error.statusCode || 500;
+    await logger.error("request_failed", error, {
+      method: request.method,
+      url: request.url,
+      status,
+    });
     sendJson(response, status, { error: error.message });
   }
 }).listen(PORT, () => {
@@ -69,6 +76,7 @@ async function handleApi(request, response) {
     const session = await sessionStore.createSession({
       persona: getPersona(body.personaId),
     });
+    await logger.info("session_created", { sessionId: session.id, personaId: session.personaId });
     sendJson(response, 200, { session });
     return;
   }
@@ -96,6 +104,7 @@ async function handleApi(request, response) {
         source: "qa-memory",
         qaRecordId: memoryAnswer.id,
       });
+      await logger.info("chat_answered_from_qa_memory", { sessionId: agent.session.id, qaRecordId: memoryAnswer.id });
       sendJson(response, 200, {
         source: "qa-memory",
         answer: memoryAnswer.answer,
@@ -111,6 +120,7 @@ async function handleApi(request, response) {
       question: message,
       answer,
     });
+    await logger.info("chat_answered_from_openai", { sessionId: agent.session.id, knownMemory: Boolean(knownMemory) });
     sendJson(response, 200, { source: "openai", answer, session: agent.session });
     return;
   }
@@ -118,6 +128,34 @@ async function handleApi(request, response) {
   const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
   if (request.method === "GET" && sessionMatch) {
     sendJson(response, 200, { session: await requireSession(sessionMatch[1]) });
+    return;
+  }
+
+  const renameSessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/rename$/);
+  if (request.method === "POST" && renameSessionMatch) {
+    const body = await readJsonBody(request);
+    const session = await sessionStore.renameSession(renameSessionMatch[1], body.title);
+
+    if (!session) {
+      sendJson(response, 404, { error: "Session not found." });
+      return;
+    }
+
+    await logger.info("session_renamed", { sessionId: session.id, title: session.title });
+    sendJson(response, 200, { session });
+    return;
+  }
+
+  if (request.method === "DELETE" && sessionMatch) {
+    const deleted = await sessionStore.deleteSession(sessionMatch[1]);
+
+    if (!deleted) {
+      sendJson(response, 404, { error: "Session not found." });
+      return;
+    }
+
+    await logger.info("session_deleted", { sessionId: deleted.id });
+    sendJson(response, 200, { deleted });
     return;
   }
 
@@ -130,12 +168,14 @@ async function handleApi(request, response) {
       sessionStore,
     });
     await agent.clear();
+    await logger.info("session_cleared", { sessionId: agent.session.id });
     sendJson(response, 200, { session: agent.session });
     return;
   }
 
   if (route === "POST /api/memory/build") {
     const database = await qaStore.buildFromSessions(await sessionStore.listSessions());
+    await logger.info("qa_index_built", { recordCount: database.recordCount });
     sendJson(response, 200, { recordCount: database.recordCount });
     return;
   }
@@ -174,6 +214,7 @@ async function handleApi(request, response) {
     }
 
     sendJson(response, 200, { extractedCount, addedCount });
+    await logger.info("knowledge_extracted", { extractedCount, addedCount, sessionId: body.sessionId });
     return;
   }
 
@@ -195,18 +236,27 @@ async function handleApi(request, response) {
     }
 
     sendJson(response, 200, { item });
+    await logger.info(`knowledge_${action}`, { id, status: item.status });
+    return;
+  }
+
+  if (route === "GET /api/logs") {
+    sendJson(response, 200, { logs: await logger.read({ limit: Number(url.searchParams.get("limit") || 200) }) });
     return;
   }
 
   if (route === "POST /api/master-clear") {
     const body = await readJsonBody(request);
     const result = await masterClear(body);
+    await logger.info("master_clear", { target: body.target });
     sendJson(response, 200, result);
     return;
   }
 
   if (route === "POST /api/training/export") {
-    sendJson(response, 200, await exportTrainingData({ knowledgeStore }));
+    const result = await exportTrainingData({ knowledgeStore });
+    await logger.info("training_exported", result);
+    sendJson(response, 200, result);
     return;
   }
 
