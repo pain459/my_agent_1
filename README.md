@@ -65,9 +65,9 @@ coach       Reflective Coach
 
 Every chat is saved as a local session under `.agent/sessions/`. Session files are ignored by git because they may contain private conversation data.
 
-## Master Q/A Database
+## Q/A Cache
 
-Sessions remain the raw JSON memory. The master Q/A database is a derived index at `.agent/qa-index.json` that extracts user question and assistant answer pairs from all sessions.
+Sessions remain the raw JSON memory. The Q/A cache is a derived index at `.agent/qa-index.json` that extracts user question and assistant answer pairs from all sessions.
 
 Build or rebuild it without starting chat:
 
@@ -75,15 +75,25 @@ Build or rebuild it without starting chat:
 npm run memory:build
 ```
 
-During chat, exact repeated questions are answered from this master memory before making a new OpenAI API call. Similar questions are available through `/memory-search`, and broad patterns are visible through `/memory-stats`.
+During chat, exact repeated questions can be answered from this cache before making a new OpenAI API call. Similar questions are searchable from the admin page.
 
-## Raw Knowledge and Training Export
+## Knowledge Pipeline
 
-The knowledge layer distills full chats into reusable items stored in `.agent/knowledge.json`. Extracted items start as `pending` so they can be reviewed before the agent relies on them.
+Knowledge has a controlled lifecycle:
 
-Knowledge ingestion is tracked in `.agent/knowledge-ingestion.json`. A session is skipped once it is up to date, unless you enable force re-ingest from the admin page.
+```text
+sessions -> review queue -> approved knowledge -> runtime memory -> local answers
+```
 
-Approved knowledge is retrieved before OpenAI calls and injected into the prompt as known memory. Pending and rejected items are never used at runtime.
+- `.agent/knowledge-review.json` stores extracted candidates waiting for approval or rejection.
+- `.agent/knowledge.json` stores approved knowledge, but approved items are not used at runtime until saved to memory.
+- `.agent/memory.json` stores runtime memory records searched before OpenAI calls.
+- `.agent/discard-bin.json` stores rejected candidates until you flush discarded data.
+- `.agent/knowledge-ingestion.json` tracks which sessions were extracted and skips unchanged sessions unless force re-ingest is enabled.
+
+When runtime memory has a strong local match, the agent answers from memory and marks the response source as `memory`. If there is no strong memory match, the Q/A cache can answer exact repeats. Otherwise the agent calls OpenAI.
+
+## Training Export
 
 Export approved knowledge as JSONL for future fine-tuning preparation:
 
@@ -91,11 +101,11 @@ Export approved knowledge as JSONL for future fine-tuning preparation:
 npm run training:export
 ```
 
-The export writes `.agent/exports/training.jsonl`. It does not start a fine-tuning job.
+The export writes `.agent/exports/training.jsonl`. It uses approved knowledge only and does not start a fine-tuning job.
 
 ## Deleting Memory
 
-Delete individual knowledge items from the admin page. Larger clear operations are guarded by confirmation phrases. `memory` clears `.agent/knowledge.json`, `.agent/knowledge-ingestion.json`, and `.agent/qa-index.json`. `chats` clears `.agent/sessions/`. `all` does both.
+Rejecting a review candidate moves it to the discard bin. Flushing discarded data permanently clears rejected candidates. Larger clear operations are guarded by confirmation phrases. `memory` clears `.agent/knowledge-review.json`, `.agent/knowledge.json`, `.agent/memory.json`, `.agent/discard-bin.json`, `.agent/knowledge-ingestion.json`, and `.agent/qa-index.json`. `chats` clears `.agent/sessions/`. `all` does both.
 
 ## Project Structure
 

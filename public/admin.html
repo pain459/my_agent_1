@@ -21,41 +21,62 @@
 
       <main class="admin-grid">
         <section class="panel">
-          <h2>Q/A Memory</h2>
+          <h2>Q/A Cache</h2>
           <div class="button-row">
-            <button id="buildMemoryButton" type="button">Build Q/A Index</button>
-            <button id="memoryStatsButton" type="button">Stats</button>
+            <button id="buildQaButton" type="button">Build Q/A Index</button>
+            <button id="qaStatsButton" type="button">Stats</button>
           </div>
           <div class="search-row">
-            <input id="memorySearchInput" type="search" placeholder="Search prior answers">
-            <button id="memorySearchButton" type="button">Search</button>
+            <input id="qaSearchInput" type="search" placeholder="Search prior exact answers">
+            <button id="qaSearchButton" type="button">Search</button>
           </div>
-          <div id="memoryResults" class="results tall"></div>
+          <div id="qaResults" class="results tall"></div>
         </section>
 
         <section class="panel">
-          <h2>Knowledge Review</h2>
+          <h2>Ingestion</h2>
           <div class="button-row">
-            <button id="buildKnowledgeButton" type="button">Extract From All Sessions</button>
-            <button id="refreshKnowledgeButton" type="button">Refresh</button>
+            <button id="extractKnowledgeButton" type="button">Extract New/Changed</button>
+            <button id="refreshIngestionButton" type="button">Refresh</button>
           </div>
           <label class="check-row">
             <input id="forceKnowledgeBuild" type="checkbox">
             Force re-ingest already processed sessions
           </label>
-          <select id="knowledgeStatus">
-            <option value="">All</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          <div class="search-row">
-            <input id="knowledgeSearchInput" type="search" placeholder="Search approved knowledge">
-            <button id="knowledgeSearchButton" type="button">Search</button>
-          </div>
-          <div id="knowledgeList" class="results tall"></div>
-          <h2>Ingestion Status</h2>
           <div id="ingestionList" class="results"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Review Queue</h2>
+            <button id="refreshReviewButton" type="button">Refresh</button>
+          </div>
+          <div id="reviewList" class="results tall"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Approved Knowledge</h2>
+            <button id="saveApprovedButton" type="button">Save to Memory</button>
+          </div>
+          <div id="approvedList" class="results tall"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Runtime Memory</h2>
+          <div class="search-row">
+            <input id="runtimeMemorySearchInput" type="search" placeholder="Search saved memory">
+            <button id="runtimeMemorySearchButton" type="button">Search</button>
+          </div>
+          <div id="runtimeMemoryResults" class="results tall"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Discard Bin</h2>
+            <button id="flushDiscardButton" type="button">Flush Discarded Data</button>
+          </div>
+          <div id="discardList" class="results tall"></div>
         </section>
 
         <section class="panel">

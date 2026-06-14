@@ -23,7 +23,10 @@ PUBLIC_DIR = ROOT / "public"
 AGENT_DIR = ROOT / ".agent"
 SESSIONS_DIR = AGENT_DIR / "sessions"
 QA_INDEX_PATH = AGENT_DIR / "qa-index.json"
+KNOWLEDGE_REVIEW_PATH = AGENT_DIR / "knowledge-review.json"
 KNOWLEDGE_PATH = AGENT_DIR / "knowledge.json"
+MEMORY_PATH = AGENT_DIR / "memory.json"
+DISCARD_BIN_PATH = AGENT_DIR / "discard-bin.json"
 INGESTION_PATH = AGENT_DIR / "knowledge-ingestion.json"
 LOG_PATH = AGENT_DIR / "logs" / "app.log"
 TRAINING_EXPORT_PATH = AGENT_DIR / "exports" / "training.jsonl"
@@ -33,7 +36,7 @@ DEFAULT_AGENT_NAME = "My Agent"
 DEFAULT_PORT = 3000
 
 VALID_KNOWLEDGE_TYPES = {"fact", "preference", "decision", "procedure", "correction", "example"}
-VALID_KNOWLEDGE_STATUSES = {"pending", "approved", "rejected"}
+MEMORY_LOCAL_ANSWER_THRESHOLD = 0.72
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "how", "i", "in", "is", "it", "of", "on", "or", "our", "so", "the",
@@ -260,9 +263,12 @@ def random_suffix(length: int = 6) -> str:
     return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(length))
 
 
+def compact_timestamp(timestamp: str) -> str:
+    return re.sub(r"\D", "", timestamp)[:14]
+
+
 def create_session_id(timestamp: str) -> str:
-    compact = re.sub(r"\D", "", timestamp)[:14]
-    return f"{compact}-{random_suffix()}"
+    return f"{compact_timestamp(timestamp)}-{random_suffix()}"
 
 
 def build_session_gist(messages: list[dict]) -> str:
@@ -552,111 +558,292 @@ def clear_qa() -> dict:
     return database
 
 
-def knowledge_database(items: list[dict] | None = None) -> dict:
+def collection_database(items: list[dict] | None = None, key: str = "items") -> dict:
     items = items or []
-    return {"version": 1, "updatedAt": now_iso(), "itemCount": len(items), "items": items}
+    return {"version": 1, "updatedAt": now_iso(), "itemCount": len(items), key: items}
 
 
-def load_knowledge() -> dict:
-    return read_json(KNOWLEDGE_PATH, knowledge_database)
-
-
-def save_knowledge(database: dict) -> dict:
+def save_collection(path: Path, database: dict, key: str = "items") -> dict:
     database["updatedAt"] = now_iso()
-    database["itemCount"] = len(database.get("items", []))
-    write_json(KNOWLEDGE_PATH, database)
+    database["itemCount"] = len(database.get(key, []))
+    write_json(path, database)
     return database
 
 
-def create_knowledge_item(candidate: dict) -> dict:
+def load_review() -> dict:
+    return read_json(KNOWLEDGE_REVIEW_PATH, lambda: collection_database())
+
+
+def save_review(database: dict) -> dict:
+    return save_collection(KNOWLEDGE_REVIEW_PATH, database)
+
+
+def load_knowledge() -> dict:
+    return read_json(KNOWLEDGE_PATH, lambda: collection_database())
+
+
+def save_knowledge(database: dict) -> dict:
+    return save_collection(KNOWLEDGE_PATH, database)
+
+
+def load_memory() -> dict:
+    return read_json(MEMORY_PATH, lambda: collection_database([], "records"))
+
+
+def save_memory(database: dict) -> dict:
+    return save_collection(MEMORY_PATH, database, "records")
+
+
+def load_discard_bin() -> dict:
+    return read_json(DISCARD_BIN_PATH, lambda: collection_database())
+
+
+def save_discard_bin(database: dict) -> dict:
+    return save_collection(DISCARD_BIN_PATH, database)
+
+
+def clamp_confidence(value) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = 0.5
+    return max(0.0, min(1.0, confidence))
+
+
+def source_context_for(session: dict, source_message_ids: list[str]) -> dict:
+    messages = session.get("messages", [])
+    selected = []
+    for raw_id in source_message_ids:
+        try:
+            index = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(messages):
+            selected.append((index, messages[index]))
+    if not selected:
+        selected = list(enumerate(messages))
+    question_index = None
+    question = ""
+    answer = ""
+    for index, message in selected:
+        if message.get("role") == "user":
+            question_index = index
+            question = str(message.get("content", "")).strip()
+            break
+    if question_index is not None:
+        for message in messages[question_index + 1:]:
+            if message.get("role") == "assistant":
+                answer = str(message.get("content", "")).strip()
+                break
+    if not question:
+        question = next((str(message.get("content", "")).strip() for message in messages if message.get("role") == "user"), "")
+    if not answer:
+        answer = next((str(message.get("content", "")).strip() for message in messages if message.get("role") == "assistant"), "")
+    return {"sourceQuestion": question, "sourceAnswer": answer}
+
+
+def knowledge_fingerprint(source_session_id: str, source_question: str, source_answer: str, text: str) -> str:
+    normalized = normalize_text(f"{source_session_id} {source_question} {source_answer} {text}")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def create_review_candidate(candidate: dict, session: dict) -> dict:
     timestamp = now_iso()
     text = str(candidate.get("text", "")).strip()
     item_type = candidate.get("type") if candidate.get("type") in VALID_KNOWLEDGE_TYPES else "fact"
-    source_session_id = str(candidate.get("sourceSessionId", ""))
-    fingerprint = normalize_text(f"{source_session_id} {item_type} {text}")
-    try:
-        confidence = float(candidate.get("confidence", 0.5))
-    except (TypeError, ValueError):
-        confidence = 0.5
-    confidence = max(0.0, min(1.0, confidence))
+    source_message_ids = [str(value) for value in candidate.get("sourceMessageIds", []) if value is not None]
+    source_context = source_context_for(session, source_message_ids)
+    fingerprint = knowledge_fingerprint(
+        session["id"],
+        source_context["sourceQuestion"],
+        source_context["sourceAnswer"],
+        text,
+    )
     return {
-        "id": f"kn-{item_type}-{re.sub(r'\\D', '', timestamp)[:14]}-{random_suffix()}",
+        "id": f"rv-{item_type}-{compact_timestamp(timestamp)}-{random_suffix()}",
         "type": item_type,
-        "status": "pending",
         "text": text,
-        "sourceSessionId": source_session_id,
-        "sourceMessageIds": [str(value) for value in candidate.get("sourceMessageIds", []) if value is not None],
-        "personaId": candidate.get("personaId"),
-        "confidence": confidence,
+        "sourceSessionId": session["id"],
+        "sourceQuestion": source_context["sourceQuestion"],
+        "sourceAnswer": source_context["sourceAnswer"],
+        "sourceMessageIds": source_message_ids,
+        "personaId": session.get("personaId"),
+        "confidence": clamp_confidence(candidate.get("confidence", 0.5)),
+        "contentHash": session_content_hash(session),
         "fingerprint": fingerprint,
-        "keywords": keywords(text),
+        "keywords": keywords(f"{text} {source_context['sourceQuestion']}"),
         "createdAt": timestamp,
         "updatedAt": timestamp,
     }
 
 
-def add_knowledge_candidates(candidates: list[dict]) -> list[dict]:
-    database = load_knowledge()
-    existing = {item.get("fingerprint") for item in database.get("items", [])}
+def all_knowledge_fingerprints() -> set[str]:
+    fingerprints = set()
+    for database in (load_review(), load_knowledge(), load_memory(), load_discard_bin()):
+        for item in database.get("items", []) + database.get("records", []):
+            fingerprint = item.get("fingerprint")
+            if fingerprint:
+                fingerprints.add(fingerprint)
+    return fingerprints
+
+
+def add_review_candidates(candidates: list[dict], session: dict) -> list[dict]:
+    database = load_review()
+    existing = all_knowledge_fingerprints()
     added = []
     for candidate in candidates:
-        item = create_knowledge_item(candidate)
+        item = create_review_candidate(candidate, session)
         if not item["text"] or item["fingerprint"] in existing:
             continue
         database.setdefault("items", []).append(item)
         existing.add(item["fingerprint"])
         added.append(item)
-    save_knowledge(database)
+    save_review(database)
     return added
 
 
-def list_knowledge(status: str | None = None) -> list[dict]:
-    items = load_knowledge().get("items", [])
-    if status:
-        items = [item for item in items if item.get("status") == status]
-    return sorted(items, key=lambda item: item.get("updatedAt", ""), reverse=True)
+def list_review_candidates() -> list[dict]:
+    return sorted(load_review().get("items", []), key=lambda item: item.get("createdAt", ""), reverse=True)
 
 
-def update_knowledge_status(item_id: str, status: str) -> dict | None:
-    if status not in VALID_KNOWLEDGE_STATUSES:
-        raise HttpError(400, f"Invalid knowledge status: {status}")
-    database = load_knowledge()
-    for item in database.get("items", []):
-        if item.get("id") == item_id:
-            item["status"] = status
-            item["updatedAt"] = now_iso()
-            save_knowledge(database)
-            return item
-    return None
+def list_approved_knowledge() -> list[dict]:
+    return sorted(load_knowledge().get("items", []), key=lambda item: item.get("approvedAt", item.get("updatedAt", "")), reverse=True)
 
 
-def delete_knowledge(item_id: str) -> dict | None:
-    database = load_knowledge()
+def list_discarded() -> list[dict]:
+    return sorted(load_discard_bin().get("items", []), key=lambda item: item.get("rejectedAt", item.get("updatedAt", "")), reverse=True)
+
+
+def pop_review_candidate(item_id: str) -> dict | None:
+    database = load_review()
     items = database.get("items", [])
     found = next((item for item in items if item.get("id") == item_id), None)
     if not found:
         return None
     database["items"] = [item for item in items if item.get("id") != item_id]
-    save_knowledge(database)
+    save_review(database)
     return found
 
 
-def search_knowledge(query: str, status: str | None = "approved", limit: int = 5) -> list[dict]:
-    query_keywords = keywords(query)
-    normalized = normalize_text(query)
-    results = []
-    for item in load_knowledge().get("items", []):
-        if status and item.get("status") != status:
+def approve_review_candidate(item_id: str) -> dict | None:
+    item = pop_review_candidate(item_id)
+    if not item:
+        return None
+    timestamp = now_iso()
+    approved = {**item, "approvedAt": timestamp, "updatedAt": timestamp}
+    database = load_knowledge()
+    existing = {entry.get("fingerprint") for entry in database.get("items", [])}
+    if approved.get("fingerprint") not in existing:
+        database.setdefault("items", []).append(approved)
+        save_knowledge(database)
+    return approved
+
+
+def reject_review_candidate(item_id: str) -> dict | None:
+    item = pop_review_candidate(item_id)
+    if not item:
+        return None
+    timestamp = now_iso()
+    rejected = {**item, "rejectedAt": timestamp, "updatedAt": timestamp}
+    database = load_discard_bin()
+    existing = {entry.get("fingerprint") for entry in database.get("items", [])}
+    if rejected.get("fingerprint") not in existing:
+        database.setdefault("items", []).append(rejected)
+        save_discard_bin(database)
+    return rejected
+
+
+def flush_discard_bin() -> dict:
+    database = collection_database([])
+    write_json(DISCARD_BIN_PATH, database)
+    return database
+
+
+def memory_record_from_knowledge(item: dict) -> dict:
+    timestamp = now_iso()
+    return {
+        "id": f"mem-{compact_timestamp(timestamp)}-{random_suffix()}",
+        "knowledgeId": item.get("id"),
+        "type": item.get("type"),
+        "question": item.get("sourceQuestion", ""),
+        "answer": item.get("text", ""),
+        "sourceAnswer": item.get("sourceAnswer", ""),
+        "sourceSessionId": item.get("sourceSessionId"),
+        "sourceMessageIds": item.get("sourceMessageIds", []),
+        "personaId": item.get("personaId"),
+        "confidence": item.get("confidence", 0.5),
+        "fingerprint": item.get("fingerprint"),
+        "keywords": keywords(f"{item.get('sourceQuestion', '')} {item.get('text', '')}"),
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+    }
+
+
+def save_approved_to_memory() -> dict:
+    knowledge_database = load_knowledge()
+    memory_database = load_memory()
+    records = memory_database.setdefault("records", [])
+    existing_knowledge_ids = {record.get("knowledgeId") for record in records}
+    saved = []
+    timestamp = now_iso()
+    for item in knowledge_database.get("items", []):
+        if item.get("id") in existing_knowledge_ids:
             continue
-        score = 1.0 if normalized and normalized in normalize_text(item.get("text", "")) else jaccard(item.get("keywords", []), query_keywords)
+        record = memory_record_from_knowledge(item)
+        records.append(record)
+        item["savedToMemoryAt"] = timestamp
+        item["memoryId"] = record["id"]
+        item["updatedAt"] = timestamp
+        existing_knowledge_ids.add(item.get("id"))
+        saved.append(record)
+    save_memory(memory_database)
+    save_knowledge(knowledge_database)
+    return {"savedCount": len(saved), "records": saved}
+
+
+def search_memory(query: str, limit: int = 5) -> list[dict]:
+    normalized = normalize_text(query)
+    query_keywords = keywords(query)
+    records = load_memory().get("records", [])
+    if not normalized and not query_keywords:
+        return sorted(
+            [{**record, "score": 1.0} for record in records],
+            key=lambda item: item.get("updatedAt", item.get("createdAt", "")),
+            reverse=True,
+        )[:limit]
+    results = []
+    for record in records:
+        normalized_question = normalize_text(record.get("question", ""))
+        normalized_answer = normalize_text(record.get("answer", ""))
+        if normalized and (normalized == normalized_question or normalized in normalized_question):
+            score = 1.0
+        elif normalized and normalized in normalized_answer:
+            score = 0.9
+        else:
+            score = max(
+                jaccard(record.get("keywords", []), query_keywords),
+                jaccard(keywords(record.get("answer", "")), query_keywords),
+            )
         if score > 0:
-            results.append({**item, "score": score})
+            results.append({**record, "score": score})
     return sorted(results, key=lambda item: item["score"], reverse=True)[:limit]
 
 
+def clear_review() -> dict:
+    database = collection_database([])
+    write_json(KNOWLEDGE_REVIEW_PATH, database)
+    return database
+
+
 def clear_knowledge() -> dict:
-    database = knowledge_database([])
+    database = collection_database([])
     write_json(KNOWLEDGE_PATH, database)
+    return database
+
+
+def clear_memory() -> dict:
+    database = collection_database([], "records")
+    write_json(MEMORY_PATH, database)
     return database
 
 
@@ -753,7 +940,7 @@ def build_knowledge(session_id: str | None = None, force: bool = False) -> dict:
             skipped_sessions.append(session["id"])
             continue
         candidates = extract_knowledge_from_session(session)
-        added = add_knowledge_candidates(candidates)
+        added = add_review_candidates(candidates, session)
         extracted_count += len(candidates)
         added_count += len(added)
         processed_sessions.append(session["id"])
@@ -776,7 +963,7 @@ def build_knowledge(session_id: str | None = None, force: bool = False) -> dict:
 
 
 def export_training_data() -> dict:
-    approved = list_knowledge("approved")
+    approved = list_approved_knowledge()
     TRAINING_EXPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     records = []
     for item in approved:
@@ -808,7 +995,10 @@ def master_clear(target: str, confirmation: str) -> dict:
     if confirmation != required[target]:
         raise HttpError(400, f"Confirmation required: {required[target]}")
     if target in {"memory", "all"}:
+        clear_review()
         clear_knowledge()
+        clear_memory()
+        flush_discard_bin()
         clear_qa()
         save_ingestion({"version": 1, "updatedAt": now_iso(), "sessions": {}})
     if target in {"chats", "all"}:
@@ -891,41 +1081,57 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             append_log("info", "session_cleared", {"sessionId": session["id"]})
             self.send_json(200, {"session": session})
             return
-        if route == "POST /api/memory/build":
+        if route in {"POST /api/memory/build", "POST /api/qa/build"}:
             database = build_qa_from_sessions()
             append_log("info", "qa_index_built", {"recordCount": database["recordCount"]})
             self.send_json(200, {"recordCount": database["recordCount"]})
             return
-        if route == "GET /api/memory/search":
+        if route == "GET /api/qa/search":
             self.send_json(200, {"results": search_qa(query.get("q", [""])[0])})
             return
-        if route == "GET /api/memory/stats":
+        if route in {"GET /api/memory/stats", "GET /api/qa/stats"}:
             self.send_json(200, {"stats": qa_stats()})
             return
-        if route == "GET /api/knowledge":
-            self.send_json(200, {"items": list_knowledge(query.get("status", [None])[0])})
+        if route == "GET /api/memory/search":
+            self.send_json(200, {"results": search_memory(query.get("q", [""])[0])})
             return
-        if route == "POST /api/knowledge/build":
+        if route == "POST /api/memory/save-approved":
+            result = save_approved_to_memory()
+            append_log("info", "approved_saved_to_memory", {"savedCount": result["savedCount"]})
+            self.send_json(200, result)
+            return
+        if route in {"POST /api/knowledge/build", "POST /api/knowledge/extract"}:
             body = self.read_json_body()
             result = build_knowledge(body.get("sessionId"), force=bool(body.get("force")))
             append_log("info", "knowledge_extracted", result)
             self.send_json(200, result)
             return
+        if route in {"GET /api/knowledge", "GET /api/knowledge/review"}:
+            self.send_json(200, {"items": list_review_candidates()})
+            return
         if route == "GET /api/knowledge/ingestion":
             ledger = load_ingestion()
             self.send_json(200, {"sessions": [ingestion_status_for(session, ledger) for session in list_sessions()]})
             return
-        if route == "GET /api/knowledge/search":
-            self.send_json(200, {"results": search_knowledge(query.get("q", [""])[0], status="approved")})
+        if route == "GET /api/knowledge/approved":
+            self.send_json(200, {"items": list_approved_knowledge()})
             return
-        knowledge_match = re.match(r"^/api/knowledge/([^/]+)/(approve|reject|delete)$", parsed.path)
-        if self.command == "POST" and knowledge_match:
-            item_id, action = knowledge_match.groups()
-            item = delete_knowledge(item_id) if action == "delete" else update_knowledge_status(item_id, "approved" if action == "approve" else "rejected")
+        review_match = re.match(r"^/api/knowledge/review/([^/]+)/(approve|reject)$", parsed.path)
+        if self.command == "POST" and review_match:
+            item_id, action = review_match.groups()
+            item = approve_review_candidate(item_id) if action == "approve" else reject_review_candidate(item_id)
             if not item:
-                raise HttpError(404, "Knowledge item not found.")
-            append_log("info", f"knowledge_{action}", {"id": item_id, "status": item.get("status")})
+                raise HttpError(404, "Review candidate not found.")
+            append_log("info", f"knowledge_review_{action}", {"id": item_id})
             self.send_json(200, {"item": item})
+            return
+        if route == "GET /api/discard-bin":
+            self.send_json(200, {"items": list_discarded()})
+            return
+        if route == "POST /api/discard-bin/flush":
+            database = flush_discard_bin()
+            append_log("info", "discard_bin_flushed", {"itemCount": database["itemCount"]})
+            self.send_json(200, {"itemCount": database["itemCount"]})
             return
         if route == "GET /api/logs":
             self.send_json(200, {"logs": read_logs(int(query.get("limit", ["200"])[0]))})
@@ -949,16 +1155,22 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         message = str(body.get("message", "")).strip()
         if not message:
             raise HttpError(400, "Message is required.")
-        memory_matches = search_qa(message, limit=1)
-        if memory_matches and memory_matches[0].get("score") == 1:
-            session = record_exchange(session, message, memory_matches[0]["answer"], {"source": "qa-memory", "qaRecordId": memory_matches[0]["id"]})
-            append_log("info", "chat_answered_from_qa_memory", {"sessionId": session["id"], "qaRecordId": memory_matches[0]["id"]})
-            self.send_json(200, {"source": "qa-memory", "answer": memory_matches[0]["answer"], "session": session})
+        runtime_memory_matches = search_memory(message, limit=1)
+        if runtime_memory_matches and runtime_memory_matches[0].get("score", 0) >= MEMORY_LOCAL_ANSWER_THRESHOLD:
+            match = runtime_memory_matches[0]
+            session = record_exchange(session, message, match["answer"], {"source": "memory", "memoryId": match["id"], "score": match["score"]})
+            append_log("info", "chat_answered_from_runtime_memory", {"sessionId": session["id"], "memoryId": match["id"], "score": match["score"]})
+            self.send_json(200, {"source": "memory", "answer": match["answer"], "session": session, "match": match})
             return
-        known_memory = known_memory_text(search_knowledge(message, status="approved", limit=5))
-        answer, session = send_agent_message(session, message, known_memory)
+        qa_matches = search_qa(message, limit=1)
+        if qa_matches and qa_matches[0].get("score") == 1:
+            session = record_exchange(session, message, qa_matches[0]["answer"], {"source": "qa-memory", "qaRecordId": qa_matches[0]["id"]})
+            append_log("info", "chat_answered_from_qa_memory", {"sessionId": session["id"], "qaRecordId": qa_matches[0]["id"]})
+            self.send_json(200, {"source": "qa-memory", "answer": qa_matches[0]["answer"], "session": session})
+            return
+        answer, session = send_agent_message(session, message)
         add_qa_exchange(session, message, answer)
-        append_log("info", "chat_answered_from_openai", {"sessionId": session["id"], "knownMemory": bool(known_memory)})
+        append_log("info", "chat_answered_from_openai", {"sessionId": session["id"]})
         self.send_json(200, {"source": "openai", "answer": answer, "session": session})
 
     def serve_static(self, request_path: str):

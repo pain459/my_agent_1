@@ -26,15 +26,16 @@ http://localhost:3000
 - Dynamic personas selected at session start.
 - Persistent chat sessions stored as JSON under `.agent/sessions/`.
 - Session gist/title metadata for easy identification.
-- Master Q/A memory index stored at `.agent/qa-index.json`.
-- Exact repeated questions can be answered from Q/A memory before making a new OpenAI call.
-- Raw knowledge extraction stored at `.agent/knowledge.json`.
+- Q/A cache stored at `.agent/qa-index.json`.
+- Exact repeated questions can be answered from the Q/A cache before making a new OpenAI call.
+- Knowledge candidates are extracted into `.agent/knowledge-review.json`.
+- Approved knowledge is archived in `.agent/knowledge.json`.
+- Runtime local answers are served from `.agent/memory.json` after approved items are saved to memory.
+- Rejected candidates move to `.agent/discard-bin.json` until discarded data is flushed.
 - Knowledge ingestion ledger stored at `.agent/knowledge-ingestion.json`; unchanged sessions are skipped unless force re-ingest is enabled.
-- Knowledge items support `pending`, `approved`, and `rejected` review states.
-- Approved knowledge is injected into runtime prompts as known memory.
 - Fine-tune preparation export writes approved knowledge to `.agent/exports/training.jsonl`.
 - Guarded master clear commands can clear memory, chats, or all data with exact confirmation phrases.
-- Web UI includes chat, sessions, personas, Q/A memory tools, knowledge review, training export, admin clear controls, logs, dark/light mode, progress indicator, chat rename, and chat deletion.
+- Web UI includes chat, sessions, personas, Q/A cache tools, ingestion, review queue, approved knowledge, runtime memory, discard bin, training export, admin clear controls, logs, dark/light mode, progress indicator, chat rename, and chat deletion.
 
 ## Important Files
 
@@ -73,7 +74,7 @@ kill <PID>
 - Runtime data under `.agent/` is git-ignored because it can contain private conversations and memory.
 - Knowledge extraction requires an API key because it calls OpenAI.
 - The current search approach is local keyword/Jaccard matching, not embeddings.
-- Knowledge review is intentionally conservative: only approved items are used at runtime or exported.
+- Knowledge review is intentionally conservative: only approved items can be exported, and only approved items saved to runtime memory are used for local answers.
 - The web UI is dependency-free and served by the local Python HTTP server.
 
 ## Likely Next Work
