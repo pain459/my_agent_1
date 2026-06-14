@@ -4,7 +4,7 @@ Last updated: 2026-06-13
 
 ## Project State
 
-This project is a local OpenAI-backed agent with both a CLI and a primary web UI. The app uses Node.js with no external runtime dependencies. The default model is `gpt-4o-mini` to keep LLM call costs low.
+This project is a local OpenAI-backed agent with a primary web UI and a Python backend (`py_backend/server.py`). The app uses no external runtime dependencies. The default model is `gpt-4o-mini` to keep LLM call costs low.
 
 The web UI is now the main interface:
 
@@ -18,11 +18,7 @@ Open:
 http://localhost:3000
 ```
 
-The CLI still exists:
-
-```bash
-npm start
-```
+`npm start` also runs the Python web backend.
 
 ## Core Features Built
 
@@ -33,6 +29,7 @@ npm start
 - Master Q/A memory index stored at `.agent/qa-index.json`.
 - Exact repeated questions can be answered from Q/A memory before making a new OpenAI call.
 - Raw knowledge extraction stored at `.agent/knowledge.json`.
+- Knowledge ingestion ledger stored at `.agent/knowledge-ingestion.json`; unchanged sessions are skipped unless force re-ingest is enabled.
 - Knowledge items support `pending`, `approved`, and `rejected` review states.
 - Approved knowledge is injected into runtime prompts as known memory.
 - Fine-tune preparation export writes approved knowledge to `.agent/exports/training.jsonl`.
@@ -41,16 +38,10 @@ npm start
 
 ## Important Files
 
-- `src/webServer.js` serves the web UI and JSON API.
-- `public/index.html`, `public/app.js`, `public/styles.css` implement the browser UI.
-- `src/agent.js` owns chat behavior and prompt construction.
-- `src/sessionStore.js` manages chat session JSON files.
-- `src/qaStore.js` builds and searches direct Q/A memory.
-- `src/knowledgeStore.js` manages reviewed reusable knowledge.
-- `src/knowledgeExtractor.js` extracts knowledge candidates with `gpt-4o-mini`.
-- `src/trainingExporter.js` exports approved knowledge to JSONL.
-- `src/logger.js` writes JSON-line logs under `.agent/logs/app.log`.
-- `src/personas.js` defines the available agent personalities.
+- `py_backend/server.py` serves the primary web UI and JSON API.
+- `py_backend/tools.py` provides maintenance helpers for Q/A rebuilds and training exports.
+- `public/index.html`, `public/app.js`, `public/styles.css` implement the chat UI.
+- `public/admin.html`, `public/admin.js` implement the admin UI.
 
 ## Verification
 
@@ -59,6 +50,7 @@ Run syntax checks:
 ```bash
 npm run check
 node --check public/app.js
+node --check public/admin.js
 ```
 
 Run the web UI:
@@ -82,11 +74,11 @@ kill <PID>
 - Knowledge extraction requires an API key because it calls OpenAI.
 - The current search approach is local keyword/Jaccard matching, not embeddings.
 - Knowledge review is intentionally conservative: only approved items are used at runtime or exported.
-- The web UI is dependency-free and served by the local Node HTTP server.
+- The web UI is dependency-free and served by the local Python HTTP server.
 
 ## Likely Next Work
 
-- Add first-class tests instead of only syntax checks and smoke commands.
+- Add first-class Python tests instead of only syntax checks and smoke commands.
 - Improve search quality with embeddings once local keyword search becomes too weak.
 - Add a richer chat transcript viewer with message timestamps and source badges.
 - Add export/import for sessions, Q/A memory, and approved knowledge.

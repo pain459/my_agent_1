@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="app-shell">
+    <div class="app-shell chat-shell">
       <aside class="sidebar">
         <header class="brand">
           <div>
@@ -16,6 +16,7 @@
           </div>
           <button id="themeToggle" class="icon-button" type="button" title="Toggle theme">Light</button>
         </header>
+        <a class="nav-link" href="/admin.html">Admin controls</a>
 
         <section class="panel">
           <div class="panel-header">
@@ -57,58 +58,6 @@
         </form>
       </main>
 
-      <aside class="tools">
-        <section class="panel">
-          <h2>Q/A Memory</h2>
-          <button id="buildMemoryButton" type="button">Build Q/A Index</button>
-          <button id="memoryStatsButton" type="button">Stats</button>
-          <div class="search-row">
-            <input id="memorySearchInput" type="search" placeholder="Search prior answers">
-            <button id="memorySearchButton" type="button">Search</button>
-          </div>
-          <div id="memoryResults" class="results"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Knowledge Review</h2>
-          <div class="button-row">
-            <button id="buildKnowledgeButton" type="button">Extract</button>
-            <button id="refreshKnowledgeButton" type="button">Refresh</button>
-          </div>
-          <select id="knowledgeStatus">
-            <option value="">All</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          <div class="search-row">
-            <input id="knowledgeSearchInput" type="search" placeholder="Search approved knowledge">
-            <button id="knowledgeSearchButton" type="button">Search</button>
-          </div>
-          <div id="knowledgeList" class="results tall"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Logs</h2>
-            <button id="refreshLogsButton" type="button">Refresh</button>
-          </div>
-          <div id="logList" class="results logs"></div>
-        </section>
-
-        <section class="panel danger">
-          <h2>Admin</h2>
-          <button id="exportTrainingButton" type="button">Export Training JSONL</button>
-          <select id="clearTarget">
-            <option value="memory">Memory</option>
-            <option value="chats">Chats</option>
-            <option value="all">All</option>
-          </select>
-          <input id="clearConfirmation" type="text" placeholder="Confirmation phrase">
-          <button id="masterClearButton" type="button">Master Clear</button>
-          <p class="muted">Required phrases: CONFIRM_CLEAR_MEMORY, CONFIRM_CLEAR_CHATS, CONFIRM_CLEAR_ALL.</p>
-        </section>
-      </aside>
     </div>
 
     <div id="toast" class="toast" role="status"></div>

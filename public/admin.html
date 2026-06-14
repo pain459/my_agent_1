@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>My Agent 1 Admin</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="admin-shell">
+      <header class="admin-header">
+        <div>
+          <h1>Admin Controls</h1>
+          <p class="muted">Memory, knowledge review, logs, exports, and guarded data clearing.</p>
+        </div>
+        <div class="button-row">
+          <a class="nav-link" href="/">Chat UI</a>
+          <button id="themeToggle" class="icon-button" type="button" title="Toggle theme">Light</button>
+        </div>
+      </header>
+
+      <main class="admin-grid">
+        <section class="panel">
+          <h2>Q/A Memory</h2>
+          <div class="button-row">
+            <button id="buildMemoryButton" type="button">Build Q/A Index</button>
+            <button id="memoryStatsButton" type="button">Stats</button>
+          </div>
+          <div class="search-row">
+            <input id="memorySearchInput" type="search" placeholder="Search prior answers">
+            <button id="memorySearchButton" type="button">Search</button>
+          </div>
+          <div id="memoryResults" class="results tall"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Knowledge Review</h2>
+          <div class="button-row">
+            <button id="buildKnowledgeButton" type="button">Extract From All Sessions</button>
+            <button id="refreshKnowledgeButton" type="button">Refresh</button>
+          </div>
+          <label class="check-row">
+            <input id="forceKnowledgeBuild" type="checkbox">
+            Force re-ingest already processed sessions
+          </label>
+          <select id="knowledgeStatus">
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <div class="search-row">
+            <input id="knowledgeSearchInput" type="search" placeholder="Search approved knowledge">
+            <button id="knowledgeSearchButton" type="button">Search</button>
+          </div>
+          <div id="knowledgeList" class="results tall"></div>
+          <h2>Ingestion Status</h2>
+          <div id="ingestionList" class="results"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Logs</h2>
+            <button id="refreshLogsButton" type="button">Refresh</button>
+          </div>
+          <div id="logList" class="results logs"></div>
+        </section>
+
+        <section class="panel danger">
+          <h2>Data Administration</h2>
+          <button id="exportTrainingButton" type="button">Export Training JSONL</button>
+          <select id="clearTarget">
+            <option value="memory">Memory</option>
+            <option value="chats">Chats</option>
+            <option value="all">All</option>
+          </select>
+          <input id="clearConfirmation" type="text" placeholder="Confirmation phrase">
+          <button id="masterClearButton" type="button">Master Clear</button>
+          <p class="muted">Required phrases: CONFIRM_CLEAR_MEMORY, CONFIRM_CLEAR_CHATS, CONFIRM_CLEAR_ALL.</p>
+        </section>
+      </main>
+    </div>
+
+    <div id="progressBar" class="progress floating-progress" aria-hidden="true"><span></span></div>
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/admin.js" type="module"></script>
+  </body>
+</html>

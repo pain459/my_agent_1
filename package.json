@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A small command-line agent that talks with a user and calls the OpenAI API.",
+  "description": "A local web agent workspace that talks with a user and calls the OpenAI API.",
   "scripts": {
-    "start": "node src/cli.js",
-    "web": "node src/webServer.js",
-    "memory:build": "node scripts/buildQaIndex.js",
-    "training:export": "node scripts/exportTrainingData.js",
-    "check": "node --check src/cli.js && node --check src/agent.js && node --check src/config.js && node --check src/knowledgeExtractor.js && node --check src/knowledgeStore.js && node --check src/logger.js && node --check src/openaiClient.js && node --check src/personas.js && node --check src/qaStore.js && node --check src/sessionStore.js && node --check src/textSearch.js && node --check src/trainingExporter.js && node --check src/webServer.js && node --check scripts/buildQaIndex.js && node --check scripts/exportTrainingData.js"
+    "start": "python3 py_backend/server.py",
+    "web": "python3 py_backend/server.py",
+    "memory:build": "python3 -m py_backend.tools memory-build",
+    "training:export": "python3 -m py_backend.tools training-export",
+    "check": "python3 -m py_compile py_backend/server.py py_backend/tools.py && node --check public/app.js && node --check public/admin.js"
   },
   "engines": {
     "node": ">=20"
